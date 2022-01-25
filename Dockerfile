@@ -13,6 +13,6 @@ FROM alpine
 
 RUN apk add --no-cache tzdata
 
-COPY --from=build /go/src/inkotools-bot /
-
 CMD ["/inkotools-bot"]
+
+COPY --from=build /go/src/inkotools-bot /
