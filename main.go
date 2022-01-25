@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -10,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mitchellh/mapstructure"
 	"gopkg.in/yaml.v3"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -204,6 +207,44 @@ func broadcastSend(text string) {
 	}
 }
 
+// sw api request
+func requestAPI(endpoint string, args map[string]interface{}) (map[string]interface{}, error) {
+	var res map[string]interface{}
+	if endpoint == "" {
+		return res, errors.New("Empty endpoint")
+	}
+	var resp *http.Response
+	var err error
+	if len(args) == 0 {
+		// if no args - use get method
+		resp, err = http.Get(CFG.InkoToolsAPI + endpoint)
+	} else {
+		// pack args to json
+		reqData, err := json.Marshal(args)
+		if err != nil {
+			log.Printf("Pack args to json error: %v", err)
+			return res, errors.New("Packing arguments to json failed")
+		}
+		resp, err = http.Post(CFG.InkoToolsAPI+endpoint, "application/json", bytes.NewBuffer(reqData))
+	}
+	if err != nil {
+		log.Printf("Send api error: %v", err)
+		return res, errors.New("Response from api failed")
+	}
+	defer resp.Body.Close()
+	// read body first (it can be invalid json)
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil || body == nil {
+		return res, errors.New("Read body failed")
+	}
+	err = json.Unmarshal(body, &res)
+	if err != nil {
+		// json is invalid -return raw body in error
+		return res, errors.New(string(body))
+	}
+	return res, nil
+}
+
 // TELEGRAM COMMANDS HANDLERS
 
 // start command handler
@@ -287,33 +328,25 @@ func cmdSwHandler(u tgbotapi.Update) {
 		sendTo(uid, fmtErr("wrong ip"))
 		return
 	}
-	// send get request to sw api
-	resp, err := http.Get(CFG.InkoToolsAPI + "/sw/" + ip)
+	resp, err := requestAPI("/sw/"+ip, map[string]interface{}{})
 	if err != nil {
-		log.Printf("Send api error: %v", err)
-		sendTo(uid, fmtErr("api request failed"))
+		log.Printf("API request error: %v", err)
+		sendTo(uid, fmtErr(err.Error()))
 		return
 	}
-	// read response body
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Printf("Read body error: %v", err)
-		sendTo(uid, fmtErr("read response body failed"))
-		return
-	}
-	// serialize data from json to struct
-	data := Switch{}
+	// serialize data from returned map to struct
+	sw := Switch{}
 	var res string
-	err = json.Unmarshal(body, &data)
+	err = mapstructure.Decode(resp, &sw)
 	if err != nil {
-		log.Printf("Parse json error: %v", err)
-		res = fmtErr("parse response json failed") +
-			"<b>RAW RESULT:</b><pre>" + string(body) + "</pre>"
+		log.Printf("Parse API response error: %v", err)
+		res = fmtErr("parse API response failed") +
+			"<b>RAW RESULT:</b><pre>" + fmt.Sprintf("%v", resp) + "</pre>"
 	} else {
 		res = fmt.Sprintf("ip: <code>%s</code>\nmac: <code>%s</code>\n"+
 			"model: <code>%s</code>\nlocation: <code>%s</code>\nstatus: ",
-			data.IP, data.MAC, data.Model, data.Location)
-		if data.Status {
+			sw.IP, sw.MAC, sw.Model, sw.Location)
+		if sw.Status {
 			res = res + UPCHAR
 		} else {
 			res = res + FAILCHAR
