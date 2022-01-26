@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -45,6 +46,18 @@ type Switch struct {
 	MAC      string `json:"mac"`
 	Model    string `json:"model"`
 	Status   bool   `json:"status"`
+}
+
+// Port type
+type Port struct {
+	Port          int    `json:"port"`
+	Type          string `json:"type"`
+	State         bool   `json:"state"`
+	Speed         string `json:"speed"`
+	Link          bool   `json:"link"`
+	Status        string `json:"status"`
+	Learning      bool   `json:"learning"`
+	Autodowngrade bool   `json:"autodowngrade"`
 }
 
 // some formatting constants
@@ -209,6 +222,7 @@ func broadcastSend(text string) {
 
 // sw api request
 func requestAPI(endpoint string, args map[string]interface{}) (map[string]interface{}, error) {
+	log.Printf("API request endpoint: %s args: %v", endpoint, args)
 	var res map[string]interface{}
 	if endpoint == "" {
 		return res, errors.New("Empty endpoint")
@@ -232,16 +246,12 @@ func requestAPI(endpoint string, args map[string]interface{}) (map[string]interf
 		return res, errors.New("Response from api failed")
 	}
 	defer resp.Body.Close()
-	// read body first (it can be invalid json)
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil || body == nil {
-		return res, errors.New("Read body failed")
-	}
-	err = json.Unmarshal(body, &res)
+	err = json.NewDecoder(resp.Body).Decode(&res)
 	if err != nil {
-		// json is invalid -return raw body in error
-		return res, errors.New(string(body))
+		log.Printf("Json decode error: %v", err)
+		return res, errors.New("Response from api failed")
 	}
+	log.Printf("API response: %v", res)
 	return res, nil
 }
 
@@ -321,7 +331,8 @@ func cmdAdminHandler(u tgbotapi.Update) {
 // sw command handler
 func cmdSwHandler(u tgbotapi.Update) {
 	uid := u.Message.From.ID
-	ip, _ := splitArgs(u.Message.CommandArguments())
+	ip, arg := splitArgs(u.Message.CommandArguments())
+	// ip part
 	// check ip
 	ip = fullIP(ip, true)
 	if ip == "" {
@@ -337,7 +348,7 @@ func cmdSwHandler(u tgbotapi.Update) {
 	// serialize data from returned map to struct
 	sw := Switch{}
 	var res string
-	err = mapstructure.Decode(resp, &sw)
+	err = mapstructure.Decode(resp["data"], &sw)
 	if err != nil {
 		log.Printf("Parse API response error: %v", err)
 		res = fmtErr("parse API response failed") +
@@ -347,9 +358,64 @@ func cmdSwHandler(u tgbotapi.Update) {
 			"model: <code>%s</code>\nlocation: <code>%s</code>\nstatus: ",
 			sw.IP, sw.MAC, sw.Model, sw.Location)
 		if sw.Status {
-			res = res + UPCHAR
+			res += UPCHAR
 		} else {
-			res = res + FAILCHAR
+			res += FAILCHAR
+		}
+	}
+	// port part
+	if arg == "" {
+		sendTo(uid, res)
+		return
+	}
+	res += "\n<b>Port info</b>"
+	port, err := strconv.Atoi(arg)
+	if err != nil {
+		res += fmtErr("Invalid port")
+		sendTo(uid, res)
+		return
+	}
+	// check if port is in access ports
+	var portRange []int
+	resp, err = requestAPI("/sw/"+ip+"/access_ports", map[string]interface{}{})
+	mapstructure.Decode(resp["data"], &portRange)
+	if sort.SearchInts(portRange, port) == len(portRange) {
+		res += fmtErr(fmt.Sprintf("Port %d is out of access ports range", port))
+		sendTo(uid, res)
+		return
+	}
+	// request port info from api
+	resp, err = requestAPI("/sw/"+ip+"/get_port_state", map[string]interface{}{"port": port})
+	var ports []Port
+	err = mapstructure.Decode(resp["data"], &ports)
+	if err != nil {
+		log.Printf("API request error: %v", err)
+		res += fmtErr(err.Error())
+		sendTo(uid, res)
+		return
+	}
+	for _, p := range ports {
+		res += fmt.Sprintf("\n<b>[%d]%s</b>", p.Port, p.Type)
+		if p.State {
+			res += VCHAR
+		} else {
+			res += XCHAR
+		}
+		res += p.Speed
+		if p.Speed != "Auto" {
+			res += WARNCHAR
+		}
+		if p.Link {
+			res += UPCHAR
+		} else {
+			res += FAILCHAR
+		}
+		res += p.Status
+		if !p.Learning {
+			res += "\n<b>MAC learning:</b> <code>disabled</code>" + WARNCHAR
+		}
+		if p.Autodowngrade {
+			res += "\n<b>Autodowngrade:</b> <code>enabled</code>"
 		}
 	}
 	sendTo(uid, res)
