@@ -271,8 +271,9 @@ func cmdStartHandler(u tgbotapi.Update) {
 
 // help command handler
 func cmdHelpHandler(u tgbotapi.Update) {
-	cmdUser := "<code>/sw IP</code> - print summary info and " +
+	cmdUser := "<code>/sw IP PORT</code> - print summary info and " +
 		"availability status of switch with ip address <b><i>IP</i></b>\n\n" +
+		"<b><i>PORT</i></b> (optional) - print port state summary\n\n" +
 		"<b><i>IP</i></b> can be in short or full format " +
 		"(e.g. <code>59.75</code> and <code>192.168.59.75</code> are equal)\n\n" +
 		"<code>/help</code> - print this help\n"
@@ -282,6 +283,7 @@ func cmdHelpHandler(u tgbotapi.Update) {
 		"<code>/admin del ID</code> - delete user with id <b><i>ID</i></b>\n" +
 		"<code>/admin send ID TEXT</code> - send message <b><i>TEXT</i></b> " +
 		"to user with id <b><i>ID</i></b>\n" +
+		"<code>/admin broadcast TEXT</code> - send broadcast message <b><i>TEXT</i></b> " +
 		"<code>/admin reload</code> - reload configuration from file\n\n"
 	uid := u.Message.From.ID
 	if !userIsAuthorized(uid) && uid != CFG.Admin {
