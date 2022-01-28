@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/http"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -41,23 +40,24 @@ var Bot *tgbotapi.BotAPI
 
 // Switch type
 type Switch struct {
-	IP       string `json:"ip"`
-	Location string `json:"location"`
-	MAC      string `json:"mac"`
-	Model    string `json:"model"`
-	Status   bool   `json:"status"`
+	IP       string `mapstructure:"ip"`
+	Location string `mapstructure:"location"`
+	MAC      string `mapstructure:"mac"`
+	Model    string `mapstructure:"model"`
+	Status   bool   `mapstructure:"status"`
 }
 
 // Port type
 type Port struct {
-	Port          int    `json:"port"`
-	Type          string `json:"type"`
-	State         bool   `json:"state"`
-	Speed         string `json:"speed"`
-	Link          bool   `json:"link"`
-	Status        string `json:"status"`
-	Learning      bool   `json:"learning"`
-	Autodowngrade bool   `json:"autodowngrade"`
+	Port          int    `mapstructure:"port"`
+	Type          string `mapstructure:"type"`
+	State         bool   `mapstructure:"state"`
+	Speed         string `mapstructure:"speed"`
+	Link          bool   `mapstructure:"link"`
+	Status        string `mapstructure:"status"`
+	Learning      bool   `mapstructure:"learning"`
+	Autodowngrade bool   `mapstructure:"autodowngrade"`
+	Description   string `mapstructure:"desc"`
 }
 
 // some formatting constants
@@ -104,7 +104,7 @@ func fullIP(ip string, isSwitch bool) string {
 
 // print error in message
 func fmtErr(e string) string {
-	return "<b>ERROR</b>" + WARNCHAR + "\n<code>" + e + "</code>\n"
+	return "\n<b>ERROR</b>" + WARNCHAR + "\n<code>" + e + "</code>\n"
 }
 
 // MAIN FUNCTIONS
@@ -220,7 +220,7 @@ func broadcastSend(text string) {
 	}
 }
 
-// sw api request
+// universal api request
 func requestAPI(endpoint string, args map[string]interface{}) (map[string]interface{}, error) {
 	log.Printf("API request endpoint: %s args: %v", endpoint, args)
 	var res map[string]interface{}
@@ -242,17 +242,37 @@ func requestAPI(endpoint string, args map[string]interface{}) (map[string]interf
 		resp, err = http.Post(CFG.InkoToolsAPI+endpoint, "application/json", bytes.NewBuffer(reqData))
 	}
 	if err != nil {
-		log.Printf("Send api error: %v", err)
-		return res, errors.New("Response from api failed")
+		log.Printf("API request error: %v", err)
+		return res, errors.New("API request failed")
 	}
 	defer resp.Body.Close()
 	err = json.NewDecoder(resp.Body).Decode(&res)
 	if err != nil {
 		log.Printf("Json decode error: %v", err)
-		return res, errors.New("Response from api failed")
+		return res, errors.New("API response decode failed")
 	}
-	log.Printf("API response: %v", res)
-	return res, nil
+	// if we have no errors from api - return result
+	if resp.StatusCode < 400 {
+		log.Printf("API response: %v", res)
+		return res, nil
+	}
+	// parse errors from api
+	if res["detail"] != nil {
+		log.Printf("API returned %d error: %v", resp.StatusCode, res["detail"])
+		switch res["detail"].(type) {
+		case string:
+			return res, errors.New(res["detail"].(string))
+		case []interface{}:
+			return res, errors.New(fmt.Sprintf("%d", resp.StatusCode))
+		}
+	}
+	log.Printf("API returned %d error, raw response: %v", resp.StatusCode, res)
+	return res, errors.New(fmt.Sprintf("%d", resp.StatusCode))
+}
+
+// api get request shortcut
+func getAPI(endpoint string) (map[string]interface{}, error) {
+	return requestAPI(endpoint, map[string]interface{}{})
 }
 
 // TELEGRAM COMMANDS HANDLERS
@@ -334,14 +354,20 @@ func cmdAdminHandler(u tgbotapi.Update) {
 func cmdSwHandler(u tgbotapi.Update) {
 	uid := u.Message.From.ID
 	ip, arg := splitArgs(u.Message.CommandArguments())
-	// ip part
-	// check ip
-	ip = fullIP(ip, true)
+	// no arguments - return help command
 	if ip == "" {
-		sendTo(uid, fmtErr("wrong ip"))
+		cmdHelpHandler(u)
 		return
 	}
-	resp, err := requestAPI("/sw/"+ip, map[string]interface{}{})
+	// ip part
+	ip = fullIP(ip, true)
+	// check ip
+	if ip == "" {
+		sendTo(uid, fmtErr("wrong switch ip"))
+		return
+	}
+	// api request for switch summary
+	resp, err := getAPI("/sw/" + ip + "/")
 	if err != nil {
 		log.Printf("API request error: %v", err)
 		sendTo(uid, fmtErr(err.Error()))
@@ -349,55 +375,34 @@ func cmdSwHandler(u tgbotapi.Update) {
 	}
 	// serialize data from returned map to struct
 	sw := Switch{}
-	var res string
-	err = mapstructure.Decode(resp["data"], &sw)
-	if err != nil {
-		log.Printf("Parse API response error: %v", err)
-		res = fmtErr("parse API response failed") +
-			"<b>RAW RESULT:</b><pre>" + fmt.Sprintf("%v", resp) + "</pre>"
+	var res string // message answer
+	mapstructure.Decode(resp["data"], &sw)
+	// format switch summary
+	res = fmt.Sprintf("ip: <code>%s</code>\nmac: <code>%s</code>\n"+
+		"model: <code>%s</code>\nlocation: <code>%s</code>\nstatus: ",
+		sw.IP, sw.MAC, sw.Model, sw.Location)
+	if sw.Status {
+		res += UPCHAR
 	} else {
-		res = fmt.Sprintf("ip: <code>%s</code>\nmac: <code>%s</code>\n"+
-			"model: <code>%s</code>\nlocation: <code>%s</code>\nstatus: ",
-			sw.IP, sw.MAC, sw.Model, sw.Location)
-		if sw.Status {
-			res += UPCHAR
-		} else {
-			res += FAILCHAR
-		}
+		res += FAILCHAR
 	}
 	// port part
 	if arg == "" {
 		sendTo(uid, res)
 		return
 	}
-	res += "\n<b>Port info</b>"
-	port, err := strconv.Atoi(arg)
+	resp, err = getAPI("/sw/" + ip + "/ports/" + arg + "/")
 	if err != nil {
-		res += fmtErr("Invalid port")
-		sendTo(uid, res)
-		return
-	}
-	// check if port is in access ports
-	var portRange []int
-	resp, err = requestAPI("/sw/"+ip+"/access_ports", map[string]interface{}{})
-	mapstructure.Decode(resp["data"], &portRange)
-	if sort.SearchInts(portRange, port) == len(portRange) {
-		res += fmtErr(fmt.Sprintf("Port %d is out of access ports range", port))
-		sendTo(uid, res)
-		return
-	}
-	// request port info from api
-	resp, err = requestAPI("/sw/"+ip+"/get_port_state", map[string]interface{}{"port": port})
-	var ports []Port
-	err = mapstructure.Decode(resp["data"], &ports)
-	if err != nil {
-		log.Printf("API request error: %v", err)
 		res += fmtErr(err.Error())
 		sendTo(uid, res)
 		return
 	}
+	// returned value is list (for combo ports - two values)
+	var ports []Port
+	mapstructure.Decode(resp["data"], &ports)
+	// format ports summary
 	for _, p := range ports {
-		res += fmt.Sprintf("\n<b>[%d]%s</b>", p.Port, p.Type)
+		res += fmt.Sprintf("\nPort <b>%d%s</b>\n<i>State:</i> ", p.Port, p.Type)
 		if p.State {
 			res += VCHAR
 		} else {
@@ -407,17 +412,21 @@ func cmdSwHandler(u tgbotapi.Update) {
 		if p.Speed != "Auto" {
 			res += WARNCHAR
 		}
+		res += "\n<i>Link:</i> "
 		if p.Link {
 			res += UPCHAR
 		} else {
 			res += FAILCHAR
 		}
 		res += p.Status
+		if p.Description != "" {
+			res += fmt.Sprintf("\n<i>Description:</i> <code>%s</code>", p.Description)
+		}
 		if !p.Learning {
-			res += "\n<b>MAC learning:</b> <code>disabled</code>" + WARNCHAR
+			res += "\n<i>MAC learning:</i> <code>disabled</code>" + WARNCHAR
 		}
 		if p.Autodowngrade {
-			res += "\n<b>Autodowngrade:</b> <code>enabled</code>"
+			res += "\n<i>Autodowngrade:</i> <code>enabled</code>"
 		}
 	}
 	sendTo(uid, res)
