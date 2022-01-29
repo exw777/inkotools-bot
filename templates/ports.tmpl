@@ -1,0 +1,18 @@
+{{- $X := "\xE2\x9D\x8C" -}}
+{{- $V := "\xE2\x9C\x85" -}}
+{{- $FAIL := "\xF0\x9F\x9A\xAB" -}}
+{{- $OK := "\xF0\x9F\x86\x97" -}}
+{{- $UP := "\xF0\x9F\x86\x99" -}}
+{{- $WARN := "\xE2\x80\xBC" -}}
+{{range .}}
+Port <b>{{ .Port }}{{ .Type }}</b>
+<i>State: </i>{{ if .State }}{{ $V }}{{ else }}{{ $X }}{{ end }}
+{{- .Speed }}{{ if ne .Speed "Auto" }}{{ $WARN }}{{ end }}
+<i>Link: </i>{{ if .Link }}{{ $UP }}{{ else }}{{ $FAIL }}{{ end }}{{ .Status }}
+{{- if .Description }}
+<i>Description: </i><code>{{ .Description }}</code>{{ end }}
+{{- if not .Learning }}
+<i>MAC learning: </i><code>disabled</code>{{ $WARN }}{{ end }}
+{{- if .Autodowngrade }}
+<i>Autodowngrade: </i><code>enabled</code>{{ end }}
+{{ end }}

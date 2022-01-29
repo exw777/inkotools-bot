@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"text/template"
 
 	"github.com/mitchellh/mapstructure"
 	"gopkg.in/yaml.v3"
@@ -34,6 +35,9 @@ type Config struct {
 
 // CFG - config object
 var CFG Config
+
+// TPL - templates object
+var TPL *template.Template
 
 // Bot - bot object
 var Bot *tgbotapi.BotAPI
@@ -67,6 +71,25 @@ const FAILCHAR string = "\xF0\x9F\x9A\xAB"
 const OKCHAR string = "\xF0\x9F\x86\x97"
 const UPCHAR string = "\xF0\x9F\x86\x99"
 const WARNCHAR string = "\xE2\x80\xBC"
+
+// help messages constants
+const CMDUSER string = `
+<code>/sw IP PORT</code> - print summary info and availability status of switch with ip address <b><i>IP</i></b>
+
+<b><i>PORT</i></b> (optional) - print port state summary
+
+<b><i>IP</i></b> can be in short or full format (e.g. <code>59.75</code> and <code>192.168.59.75</code> are equal)
+
+<code>/help</code> - print this help
+`
+const CMDADMIN string = `
+<code>/admin list</code> - list authorized users
+<code>/admin add ID [NAME]</code> - add user with id <b><i>ID</i></b> and optional mark with comment <b><i>NAME</i></b>
+<code>/admin del ID</code> - delete user with id <b><i>ID</i></b>
+<code>/admin send ID TEXT</code> - send message <b><i>TEXT</i></b> to user with id <b><i>ID</i></b>
+<code>/admin broadcast TEXT</code> - send broadcast message <b><i>TEXT</i></b> 
+<code>/admin reload</code> - reload configuration from file
+`
 
 // HELPER FUNCTIONS
 
@@ -107,6 +130,13 @@ func fmtErr(e string) string {
 	return "\n<b>ERROR</b>" + WARNCHAR + "\n<code>" + e + "</code>\n"
 }
 
+// print object formatted with template
+func fmtObj(obj interface{}, tpl string) string {
+	var buf bytes.Buffer
+	TPL.ExecuteTemplate(&buf, tpl, obj)
+	return buf.String()
+}
+
 // MAIN FUNCTIONS
 
 // init telegram bot
@@ -123,7 +153,7 @@ func initBot() tgbotapi.UpdatesChannel {
 	log.Printf("Got webhook info: %v", whInfo.URL)
 	// check webhook is set
 	if whInfo.URL != CFG.WebhookURL+Bot.Token {
-		log.Printf("New behook: %s", CFG.WebhookURL+Bot.Token)
+		log.Printf("New webhook: %s", CFG.WebhookURL+Bot.Token)
 		wh, _ := tgbotapi.NewWebhook(CFG.WebhookURL + Bot.Token)
 		_, err := Bot.Request(wh)
 		if err != nil {
@@ -150,6 +180,15 @@ func loadConfig() error {
 		return err
 	}
 	log.Printf("Config loaded from %s", CFGFILE)
+	// load templates
+	TPL, err = template.New("templates").ParseGlob("templates/*")
+	if err != nil {
+		log.Printf("Parse templates error: %v", err)
+		return err
+	}
+	for _, t := range TPL.Templates() {
+		log.Printf("Loaded template: %v", t.Name())
+	}
 	return nil
 }
 
@@ -291,30 +330,16 @@ func cmdStartHandler(u tgbotapi.Update) {
 
 // help command handler
 func cmdHelpHandler(u tgbotapi.Update) {
-	cmdUser := "<code>/sw IP PORT</code> - print summary info and " +
-		"availability status of switch with ip address <b><i>IP</i></b>\n\n" +
-		"<b><i>PORT</i></b> (optional) - print port state summary\n\n" +
-		"<b><i>IP</i></b> can be in short or full format " +
-		"(e.g. <code>59.75</code> and <code>192.168.59.75</code> are equal)\n\n" +
-		"<code>/help</code> - print this help\n"
-	cmdAdmin := "<code>/admin list</code> - list authorized users\n" +
-		"<code>/admin add ID [NAME]</code> - add user with id <b><i>ID</i></b> " +
-		"and optional mark with comment <b><i>NAME</i></b>\n" +
-		"<code>/admin del ID</code> - delete user with id <b><i>ID</i></b>\n" +
-		"<code>/admin send ID TEXT</code> - send message <b><i>TEXT</i></b> " +
-		"to user with id <b><i>ID</i></b>\n" +
-		"<code>/admin broadcast TEXT</code> - send broadcast message <b><i>TEXT</i></b> " +
-		"<code>/admin reload</code> - reload configuration from file\n\n"
 	uid := u.Message.From.ID
 	if !userIsAuthorized(uid) && uid != CFG.Admin {
 		return
 	}
-	msg := "<b>Available commands:</b>\n\n"
+	msg := "<b>Available commands:</b>\n"
 	if uid == CFG.Admin {
-		msg += cmdAdmin
+		msg += CMDADMIN
 	}
 	if userIsAuthorized(uid) {
-		msg += cmdUser
+		msg += CMDUSER
 	}
 	sendTo(uid, msg)
 }
@@ -374,18 +399,11 @@ func cmdSwHandler(u tgbotapi.Update) {
 		return
 	}
 	// serialize data from returned map to struct
-	sw := Switch{}
+	var sw Switch
 	var res string // message answer
 	mapstructure.Decode(resp["data"], &sw)
 	// format switch summary
-	res = fmt.Sprintf("ip: <code>%s</code>\nmac: <code>%s</code>\n"+
-		"model: <code>%s</code>\nlocation: <code>%s</code>\nstatus: ",
-		sw.IP, sw.MAC, sw.Model, sw.Location)
-	if sw.Status {
-		res += UPCHAR
-	} else {
-		res += FAILCHAR
-	}
+	res = fmtObj(sw, "sw.tmpl")
 	// port part
 	if arg == "" {
 		sendTo(uid, res)
@@ -401,34 +419,8 @@ func cmdSwHandler(u tgbotapi.Update) {
 	var ports []Port
 	mapstructure.Decode(resp["data"], &ports)
 	// format ports summary
-	for _, p := range ports {
-		res += fmt.Sprintf("\nPort <b>%d%s</b>\n<i>State:</i> ", p.Port, p.Type)
-		if p.State {
-			res += VCHAR
-		} else {
-			res += XCHAR
-		}
-		res += p.Speed
-		if p.Speed != "Auto" {
-			res += WARNCHAR
-		}
-		res += "\n<i>Link:</i> "
-		if p.Link {
-			res += UPCHAR
-		} else {
-			res += FAILCHAR
-		}
-		res += p.Status
-		if p.Description != "" {
-			res += fmt.Sprintf("\n<i>Description:</i> <code>%s</code>", p.Description)
-		}
-		if !p.Learning {
-			res += "\n<i>MAC learning:</i> <code>disabled</code>" + WARNCHAR
-		}
-		if p.Autodowngrade {
-			res += "\n<i>Autodowngrade:</i> <code>enabled</code>"
-		}
-	}
+	res += fmtObj(ports, "ports.tmpl")
+
 	sendTo(uid, res)
 }
 

@@ -15,4 +15,6 @@ RUN apk add --no-cache tzdata
 
 CMD ["/inkotools-bot"]
 
+COPY templates /templates
+
 COPY --from=build /go/src/inkotools-bot /

@@ -1,0 +1,7 @@
+{{- $FAIL := "\xF0\x9F\x9A\xAB" -}}
+{{- $UP := "\xF0\x9F\x86\x99" -}}
+ip: <code>{{ .IP }}</code>
+mac: <code>{{ .MAC }}</code>
+model: <code>{{ .Model }}</code>
+location: <code>{{ .Location }}</code>
+status: {{ if .Status }}{{ $UP }}{{ else }}{{ $FAIL }}{{ end }}
