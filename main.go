@@ -420,13 +420,15 @@ func cmdSwHandler(u tgbotapi.Update) {
 	var sw Switch
 	var res string // message answer
 	mapstructure.Decode(resp["data"], &sw)
-	// format switch summary
-	res = fmtObj(sw, "sw.tmpl")
-	// port part
+	// if no port - format switch full summary
 	if arg == "" {
+		res = fmtObj(sw, "sw.tmpl")
 		sendTo(uid, res)
 		return
 	}
+	// if port part exists - format switch short summary
+	res = fmtObj(sw, "sw.short.tmpl")
+
 	resp, err = getAPI("/sw/" + ip + "/ports/" + arg + "/")
 	if err != nil {
 		res += fmtErr(err.Error())

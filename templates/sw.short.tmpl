@@ -1,0 +1,4 @@
+{{- $FAIL := "\xF0\x9F\x9A\xAB" -}}
+{{- $UP := "\xF0\x9F\x86\x99" -}}
+{{ if .Status }}{{ $UP }}{{ else }}{{ $FAIL }}{{ end -}}
+[<code>{{ slice .IP 8 }}</code>][<b>{{ .Location }}</b>]
