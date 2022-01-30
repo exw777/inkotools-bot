@@ -8,11 +8,17 @@
 Port <b>{{ .Port }}{{ .Type }}</b>
 <i>State: </i>{{ if .State }}{{ $V }}{{ else }}{{ $X }}{{ end }}
 {{- .Speed }}{{ if ne .Speed "Auto" }}{{ $WARN }}{{ end }}
-<i>Link: </i>{{ if .Link }}{{ $UP }}{{ else }}{{ $FAIL }}{{ end }}{{ .Status }}
+<i>Link: </i>{{ if .Link }}{{ $UP }}{{ else }}{{ $FAIL }}{{ end -}}
+<code>{{ .Status }}</code>
+{{- if .Cable }}
+{{- range .Cable }}
+<code>Pair {{ .Pair }} {{ .State }} {{ .Len }} M</code>
+{{- end -}}
+{{- end }}
 {{- if .Description }}
 <i>Description: </i><code>{{ .Description }}</code>{{ end }}
 {{- if not .Learning }}
 <i>MAC learning: </i><code>disabled</code>{{ $WARN }}{{ end }}
 {{- if .Autodowngrade }}
 <i>Autodowngrade: </i><code>enabled</code>{{ end }}
-{{ end }}
+{{- end }}

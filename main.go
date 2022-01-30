@@ -62,18 +62,36 @@ type Port struct {
 	Learning      bool   `mapstructure:"learning"`
 	Autodowngrade bool   `mapstructure:"autodowngrade"`
 	Description   string `mapstructure:"desc"`
+	Cable         []Pair `mapstructure:"cable"`
 }
 
-// some formatting constants
+// Pair type - pair in cable
+type Pair struct {
+	Pair  int    `mapstructure:"pair"`
+	State string `mapstructure:"state"`
+	Len   int    `mapstructure:"len"`
+}
+
+// XCHAR - unicode symbol X
 const XCHAR string = "\xE2\x9D\x8C"
+
+// VCHAR - unicode symbol V
 const VCHAR string = "\xE2\x9C\x85"
+
+// FAILCHAR - unicode symbol crossed circle
 const FAILCHAR string = "\xF0\x9F\x9A\xAB"
+
+// OKCHAR - unicode symbol OK
 const OKCHAR string = "\xF0\x9F\x86\x97"
+
+// UPCHAR - unicode symbol UP
 const UPCHAR string = "\xF0\x9F\x86\x99"
+
+// WARNCHAR - unicode symbol !!
 const WARNCHAR string = "\xE2\x80\xBC"
 
-// help messages constants
-const CMDUSER string = `
+// HELPUSER - help string for user
+const HELPUSER string = `
 <code>/sw IP PORT</code> - print summary info and availability status of switch with ip address <b><i>IP</i></b>
 
 <b><i>PORT</i></b> (optional) - print port state summary
@@ -82,7 +100,9 @@ const CMDUSER string = `
 
 <code>/help</code> - print this help
 `
-const CMDADMIN string = `
+
+// HELPADMIN - help string for admin
+const HELPADMIN string = `
 <code>/admin list</code> - list authorized users
 <code>/admin add ID [NAME]</code> - add user with id <b><i>ID</i></b> and optional mark with comment <b><i>NAME</i></b>
 <code>/admin del ID</code> - delete user with id <b><i>ID</i></b>
@@ -119,10 +139,8 @@ func fullIP(ip string, isSwitch bool) string {
 	}
 	if isSwitch && reSwitch.MatchString(ip) || !isSwitch && reFull.MatchString(ip) {
 		return ip
-	} else {
-		return ""
 	}
-
+	return ""
 }
 
 // print error in message
@@ -302,11 +320,11 @@ func requestAPI(endpoint string, args map[string]interface{}) (map[string]interf
 		case string:
 			return res, errors.New(res["detail"].(string))
 		case []interface{}:
-			return res, errors.New(fmt.Sprintf("%d", resp.StatusCode))
+			return res, fmt.Errorf("%d", resp.StatusCode)
 		}
 	}
 	log.Printf("API returned %d error, raw response: %v", resp.StatusCode, res)
-	return res, errors.New(fmt.Sprintf("%d", resp.StatusCode))
+	return res, fmt.Errorf("%d", resp.StatusCode)
 }
 
 // api get request shortcut
@@ -336,10 +354,10 @@ func cmdHelpHandler(u tgbotapi.Update) {
 	}
 	msg := "<b>Available commands:</b>\n"
 	if uid == CFG.Admin {
-		msg += CMDADMIN
+		msg += HELPADMIN
 	}
 	if userIsAuthorized(uid) {
-		msg += CMDUSER
+		msg += HELPUSER
 	}
 	sendTo(uid, msg)
 }
