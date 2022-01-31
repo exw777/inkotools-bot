@@ -157,6 +157,13 @@ func fmtObj(obj interface{}, tpl string) string {
 	return buf.String()
 }
 
+// debug log
+func logDebug(msg string) {
+	if CFG.DebugMode {
+		log.Printf("[DEBUG]%s", msg)
+	}
+}
+
 // MAIN FUNCTIONS
 
 // init telegram bot
@@ -170,10 +177,10 @@ func initBot() tgbotapi.UpdatesChannel {
 	log.Printf("Authorized on bot account %s", Bot.Self.UserName)
 
 	whInfo, _ := Bot.GetWebhookInfo()
-	log.Printf("Got webhook info: %v", whInfo.URL)
+	logDebug(fmt.Sprintf("Got webhook info: %v", whInfo.URL))
 	// check webhook is set
 	if whInfo.URL != CFG.WebhookURL+Bot.Token {
-		log.Printf("New webhook: %s", CFG.WebhookURL+Bot.Token)
+		logDebug(fmt.Sprintf("New webhook: %s", CFG.WebhookURL+Bot.Token))
 		wh, _ := tgbotapi.NewWebhook(CFG.WebhookURL + Bot.Token)
 		_, err := Bot.Request(wh)
 		if err != nil {
@@ -207,7 +214,7 @@ func loadConfig() error {
 		return err
 	}
 	for _, t := range TPL.Templates() {
-		log.Printf("Loaded template: %v", t.Name())
+		logDebug(fmt.Sprintf("Loaded template: %v", t.Name()))
 	}
 	return nil
 }
@@ -252,6 +259,7 @@ func manageUser(args string, enabled bool) {
 	} else {
 		return
 	}
+	logDebug(msgAdmin)
 	saveConfig()
 	sendTo(uid, msgUser)
 	sendTo(CFG.Admin, msgAdmin)
@@ -281,7 +289,7 @@ func broadcastSend(text string) {
 
 // universal api request
 func requestAPI(method string, endpoint string, args map[string]interface{}) (map[string]interface{}, error) {
-	log.Printf("API %s request endpoint: %s args: %v", method, endpoint, args)
+	logDebug(fmt.Sprintf("API %s request endpoint: %s args: %v", method, endpoint, args))
 	var res map[string]interface{}
 	if endpoint == "" {
 		return res, errors.New("Empty endpoint")
@@ -328,7 +336,7 @@ func requestAPI(method string, endpoint string, args map[string]interface{}) (ma
 	}
 	// if we have no errors from api - return result
 	if resp.StatusCode < 400 {
-		log.Printf("API response: %v", res)
+		logDebug(fmt.Sprintf("API response: %v", res))
 		return res, nil
 	}
 	// parse errors from api
