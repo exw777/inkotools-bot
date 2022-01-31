@@ -98,6 +98,8 @@ const HELPUSER string = `
 
 <b><i>IP</i></b> can be in short or full format (e.g. <code>59.75</code> and <code>192.168.59.75</code> are equal)
 
+<code>/clear IP PORT</code> - clear port error counters
+
 <code>/help</code> - print this help
 `
 
@@ -278,31 +280,47 @@ func broadcastSend(text string) {
 }
 
 // universal api request
-func requestAPI(endpoint string, args map[string]interface{}) (map[string]interface{}, error) {
-	log.Printf("API request endpoint: %s args: %v", endpoint, args)
+func requestAPI(method string, endpoint string, args map[string]interface{}) (map[string]interface{}, error) {
+	log.Printf("API %s request endpoint: %s args: %v", method, endpoint, args)
 	var res map[string]interface{}
 	if endpoint == "" {
 		return res, errors.New("Empty endpoint")
 	}
-	var resp *http.Response
-	var err error
-	if len(args) == 0 {
-		// if no args - use get method
-		resp, err = http.Get(CFG.InkoToolsAPI + endpoint)
-	} else {
-		// pack args to json
+	// pack arguments to body
+	var reqBody *bytes.Buffer
+	if len(args) > 0 {
 		reqData, err := json.Marshal(args)
 		if err != nil {
 			log.Printf("Pack args to json error: %v", err)
 			return res, errors.New("Packing arguments to json failed")
 		}
-		resp, err = http.Post(CFG.InkoToolsAPI+endpoint, "application/json", bytes.NewBuffer(reqData))
+		reqBody = bytes.NewBuffer(reqData)
 	}
+	// ensure that there is no double // symbols in url
+	url := strings.TrimRight(CFG.InkoToolsAPI, "/") + "/" + strings.TrimLeft(endpoint, "/")
+	// make request
+	var req *http.Request
+	var err error
+	// workaround typed and untyped nil
+	if reqBody == nil {
+		req, err = http.NewRequest(method, url, nil)
+	} else {
+		req, err = http.NewRequest(method, url, reqBody)
+	}
+	if err != nil {
+		log.Printf("Make request error: %v", err)
+		return res, errors.New("Making request failed")
+	}
+	req.Header.Add("Content-Type", "application/json")
+	// send json request to api
+	client := &http.Client{}
+	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("API request error: %v", err)
 		return res, errors.New("API request failed")
 	}
 	defer resp.Body.Close()
+	// parse response
 	err = json.NewDecoder(resp.Body).Decode(&res)
 	if err != nil {
 		log.Printf("Json decode error: %v", err)
@@ -328,8 +346,13 @@ func requestAPI(endpoint string, args map[string]interface{}) (map[string]interf
 }
 
 // api get request shortcut
-func getAPI(endpoint string) (map[string]interface{}, error) {
-	return requestAPI(endpoint, map[string]interface{}{})
+func apiGet(endpoint string) (map[string]interface{}, error) {
+	return requestAPI("GET", endpoint, map[string]interface{}{})
+}
+
+// api delete request shortcut
+func apiDelete(endpoint string) (map[string]interface{}, error) {
+	return requestAPI("DELETE", endpoint, map[string]interface{}{})
 }
 
 // TELEGRAM COMMANDS HANDLERS
@@ -410,7 +433,7 @@ func cmdSwHandler(u tgbotapi.Update) {
 		return
 	}
 	// api request for switch summary
-	resp, err := getAPI("/sw/" + ip + "/")
+	resp, err := apiGet("/sw/" + ip + "/")
 	if err != nil {
 		log.Printf("API request error: %v", err)
 		sendTo(uid, fmtErr(err.Error()))
@@ -429,7 +452,7 @@ func cmdSwHandler(u tgbotapi.Update) {
 	// if port part exists - format switch short summary
 	res = fmtObj(sw, "sw.short.tmpl")
 
-	resp, err = getAPI("/sw/" + ip + "/ports/" + arg + "/")
+	resp, err = apiGet("/sw/" + ip + "/ports/" + arg + "/")
 	if err != nil {
 		res += fmtErr(err.Error())
 		sendTo(uid, res)
@@ -442,6 +465,30 @@ func cmdSwHandler(u tgbotapi.Update) {
 	res += fmtObj(ports, "ports.tmpl")
 
 	sendTo(uid, res)
+}
+
+// clear command handler
+func cmdClearHandler(u tgbotapi.Update) {
+	uid := u.Message.From.ID
+	ip, port := splitArgs(u.Message.CommandArguments())
+	// no arguments - return help command
+	if ip == "" || port == "" {
+		cmdHelpHandler(u)
+		return
+	}
+	ip = fullIP(ip, true)
+	resp, err := apiDelete(fmt.Sprintf("/sw/%s/ports/%s/errors", ip, port))
+	if err != nil {
+		log.Printf("API request error: %v", err)
+		sendTo(uid, fmtErr(err.Error()))
+		return
+	}
+	if resp["detail"] == nil {
+		log.Printf("API returned no detail, raw data: %v", resp)
+		sendTo(uid, fmtErr("Empty response"))
+		return
+	}
+	sendTo(uid, resp["detail"].(string))
 }
 
 // MAIN APP
@@ -465,6 +512,8 @@ func main() {
 			cmdHelpHandler(update)
 		case "sw":
 			cmdSwHandler(update)
+		case "clear":
+			cmdClearHandler(update)
 		case "admin":
 			cmdAdminHandler(update)
 		default:
