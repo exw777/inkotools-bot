@@ -1,14 +1,25 @@
-{{- $X := "\xE2\x9D\x8C" -}}
-{{- $V := "\xE2\x9C\x85" -}}
-{{- $FAIL := "\xF0\x9F\x9A\xAB" -}}
-{{- $OK := "\xF0\x9F\x86\x97" -}}
-{{- $UP := "\xF0\x9F\x86\x99" -}}
-{{- $WARN := "\xE2\x80\xBC" -}}
-{{range .}}
-Port <b>{{ .Port }}{{ .Type }}</b>
-<i>State: </i>{{ if .State }}{{ $V }}{{ else }}{{ $X }}{{ end }}
-{{- .Speed }}{{ if ne .Speed "Auto" }}{{ $WARN }}{{ end }}
-<i>Link: </i>{{ if .Link }}{{ $UP }}{{ else }}{{ $FAIL }}{{ end -}}
+{{- $UP := "\xF0\x9F\x86\x99" }}
+{{- $WARN := "\xE2\x80\xBC" }}
+{{- $disabled := "\xF0\x9F\x8C\x91" }}
+{{- $enabled := "\xF0\x9F\x8C\x95" }}
+{{- $warning := "\xE2\x9A\xA0" }}
+{{- $linkUp := "\xF0\x9F\x8C\x8E" }}
+{{- $linkDown := "\xF0\x9F\x93\xB5" }}
+{{- $link10 := "\xF0\x9F\x8C\x90" }}
+{{- range .}}
+<i>Port: </i><b>{{ .Port }}{{ .Type }}</b>
+{{- if not .State }}
+    {{- $disabled }}
+{{- else }}
+    {{- if eq .Speed "Auto" }}
+        {{- $enabled }}
+    {{- else }}
+        {{- $warning }}
+    {{- end }}
+{{- end -}}
+<code>{{ .Speed }}</code>
+<i>Link: </i>
+{{- if .Link }}{{ $linkUp }}{{ else }}{{ $linkDown }}{{ end -}}
 <code>{{ .Status }}</code>
 {{- if .Cable }}
 {{- range .Cable }}
