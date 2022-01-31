@@ -92,15 +92,20 @@ const WARNCHAR string = "\xE2\x80\xBC"
 
 // HELPUSER - help string for user
 const HELPUSER string = `
-<code>/sw IP PORT</code> - print summary info and availability status of switch with ip address <b><i>IP</i></b>
-
-<b><i>PORT</i></b> (optional) - print port state summary
+Switch commands:
+<code>IP</code> - get switch full summary
+<code>IP PORT</code> - get short switch and short port summary
+<code>IP PORT ARGS</code> - pass additional arguments
 
 <b><i>IP</i></b> can be in short or full format (e.g. <code>59.75</code> and <code>192.168.59.75</code> are equal)
 
-<code>/clear IP PORT</code> - clear port error counters
+Each <b><i>argument</i></b> can be in abbreviated form (e.g. <code>cl</code> and <code>clear</code> are equal)
 
-<code>/help</code> - print this help
+Supported arguments:
+<code>clear</code> - clear port counters
+
+<b>Other commands:</b>
+/help - print this help
 `
 
 // HELPADMIN - help string for admin
@@ -127,7 +132,7 @@ func splitArgs(args string) (first string, other string) {
 	if len(a) < 2 {
 		return a[0], ""
 	}
-	return a[0], a[1]
+	return a[0], strings.Trim(a[1], " ")
 }
 
 // convert x.x --> 192.168.x.x, return empty string on invalid ip
@@ -363,6 +368,52 @@ func apiDelete(endpoint string) (map[string]interface{}, error) {
 	return requestAPI("DELETE", endpoint, map[string]interface{}{})
 }
 
+// get switch summary and format it with template
+func swSummary(ip string, style string) string {
+	resp, err := apiGet(fmt.Sprintf("/sw/%s/", ip))
+	if err != nil {
+		return fmtErr(err.Error())
+	}
+	// serialize data from returned map to struct
+	var sw Switch
+	mapstructure.Decode(resp["data"], &sw)
+	switch style {
+	case "short":
+		return fmtObj(sw, "sw.short.tmpl")
+	default:
+		return fmtObj(sw, "sw.tmpl")
+	}
+}
+
+// get port summary and format it with template
+func portSummary(ip string, port string, style string) string {
+	resp, err := apiGet(fmt.Sprintf("/sw/%s/ports/%s/", ip, port))
+	if err != nil {
+		return fmtErr(err.Error())
+	}
+	// returned value is list (for combo ports - two values)
+	var ports []Port
+	mapstructure.Decode(resp["data"], &ports)
+	// format ports summary
+	switch style {
+	default:
+		return fmtObj(ports, "ports.tmpl")
+	}
+}
+
+// clear port counters
+func portClear(ip string, port string) string {
+	resp, err := apiDelete(fmt.Sprintf("/sw/%s/ports/%s/errors", ip, port))
+	if err != nil {
+		return fmtErr(err.Error())
+	}
+	if resp["detail"] == nil {
+		log.Printf("[Clear %s %s]API returned no detail, raw data: %v", ip, port, resp)
+		return fmtErr("Empty response")
+	}
+	return resp["detail"].(string)
+}
+
 // TELEGRAM COMMANDS HANDLERS
 
 // start command handler
@@ -424,6 +475,7 @@ func cmdAdminHandler(u tgbotapi.Update) {
 	}
 }
 
+///////////////////////////////////LEGACY//////////////////////////
 // sw command handler
 func cmdSwHandler(u tgbotapi.Update) {
 	uid := u.Message.From.ID
@@ -499,6 +551,58 @@ func cmdClearHandler(u tgbotapi.Update) {
 	sendTo(uid, resp["detail"].(string))
 }
 
+///////////////////////////////END LEGACY//////////////////////////
+
+// parse raw input handler
+func rawInputHandler(u tgbotapi.Update) {
+	uid := u.Message.From.ID
+	var res string // answer to user
+	cmd, args := splitArgs(u.Message.Text)
+	// check if cmd is ip
+	ip := fullIP(cmd, false)
+	if ip != "" {
+		if fullIP(ip, true) != "" {
+			// ip is sw ip
+			port, args := splitArgs(args)
+			res = swHandler(ip, port, args)
+			goto END
+		}
+		// ip is client ip
+		res = ipHandler(ip, args)
+		goto END
+	}
+
+	logDebug(fmt.Sprintf("user: %s, cmd: %s, args: %s", CFG.Users[uid], cmd, args))
+
+END:
+	// send output to user
+	if res != "" {
+		sendTo(uid, res)
+	}
+}
+
+// switch ip handler
+func swHandler(ip string, port string, args string) string {
+	switch {
+	case port == "":
+		return swSummary(ip, "full")
+	case args == "":
+		return swSummary(ip, "short") + portSummary(ip, port, "short")
+	case strings.HasPrefix("full", args):
+		return swSummary(ip, "short") + portSummary(ip, port, "full")
+	case strings.HasPrefix("clear", args):
+		return portClear(ip, port)
+	default:
+		return ""
+	}
+}
+
+// client ip handler
+func ipHandler(ip string, args string) string {
+	// not implemented yet
+	return ""
+}
+
 // MAIN APP
 func main() {
 	loadConfig()
@@ -508,24 +612,28 @@ func main() {
 		if update.Message == nil {
 			continue
 		}
-		// ignore any non-command Messages
-		if !update.Message.IsCommand() {
-			continue
-		}
-		cmd := update.Message.Command()
-		switch cmd {
-		case "start":
-			cmdStartHandler(update)
-		case "help":
-			cmdHelpHandler(update)
-		case "sw":
-			cmdSwHandler(update)
-		case "clear":
-			cmdClearHandler(update)
-		case "admin":
-			cmdAdminHandler(update)
-		default:
-			cmdHelpHandler(update)
+		// command messages
+		if update.Message.IsCommand() {
+			cmd := update.Message.Command()
+			switch cmd {
+			case "start":
+				cmdStartHandler(update)
+			case "help":
+				cmdHelpHandler(update)
+				////////////////////////LEGACY/////////////////
+			case "sw":
+				cmdSwHandler(update)
+			case "clear":
+				cmdClearHandler(update)
+				////////////////////END LEGACY/////////////////
+			case "admin":
+				cmdAdminHandler(update)
+			default:
+				cmdHelpHandler(update)
+			}
+		} else {
+			// raw messages
+			rawInputHandler(update)
 		}
 	}
 }
