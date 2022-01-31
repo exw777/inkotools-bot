@@ -12,7 +12,8 @@ Port <b>{{ .Port }}{{ .Type }}</b>
 <code>{{ .Status }}</code>
 {{- if .Cable }}
 {{- range .Cable }}
-<code>Pair {{ .Pair }} {{ .State }} {{ .Len }} M</code>
+<code>Pair {{ .Pair }} {{ .State }}
+{{- if ne .Len 666 }} {{ .Len }} M{{ end }}</code>
 {{- end -}}
 {{- end }}
 {{- if .Description }}
