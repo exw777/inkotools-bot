@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/mitchellh/mapstructure"
 	"gopkg.in/yaml.v3"
@@ -132,7 +133,7 @@ func splitArgs(args string) (first string, other string) {
 	if len(a) < 2 {
 		return a[0], ""
 	}
-	return a[0], strings.Trim(a[1], " ")
+	return a[0], strings.TrimSpace(a[1])
 }
 
 // convert x.x --> 192.168.x.x, return empty string on invalid ip
@@ -167,6 +168,12 @@ func logDebug(msg string) {
 	if CFG.DebugMode {
 		log.Printf("[DEBUG]%s", msg)
 	}
+}
+
+// print timestamp
+func printUpdated() string {
+	t := time.Now().Format("2006-01-02 15:04:05")
+	return fmt.Sprintf("\n<i>Updated:</i> <code>%s</code>", t)
 }
 
 // MAIN FUNCTIONS
@@ -396,6 +403,8 @@ func portSummary(ip string, port string, style string) string {
 	mapstructure.Decode(resp["data"], &ports)
 	// format ports summary
 	switch style {
+	case "short":
+		return fmtObj(ports, "ports.tmpl") + printUpdated()
 	default:
 		return fmtObj(ports, "ports.tmpl")
 	}
@@ -477,9 +486,18 @@ func cmdAdminHandler(u tgbotapi.Update) {
 
 // parse raw input handler
 func rawInputHandler(u tgbotapi.Update) {
-	uid := u.Message.From.ID
+	var uid int64
+	var rawInput string
+	var action string
+	if u.CallbackQuery != nil {
+		uid = u.CallbackQuery.Message.Chat.ID
+		action, rawInput = splitArgs(u.CallbackQuery.Data)
+	} else {
+		uid = u.Message.From.ID
+		rawInput = u.Message.Text
+	}
 	var res string // answer to user
-	cmd, args := splitArgs(u.Message.Text)
+	cmd, args := splitArgs(rawInput)
 	// check if cmd is ip
 	ip := fullIP(cmd, false)
 	if ip != "" {
@@ -487,19 +505,50 @@ func rawInputHandler(u tgbotapi.Update) {
 			// ip is sw ip
 			port, args := splitArgs(args)
 			res = swHandler(ip, port, args)
-			goto END
+			goto SEND
 		}
 		// ip is client ip
 		res = ipHandler(ip, args)
-		goto END
+		goto SEND
 	}
 
 	logDebug(fmt.Sprintf("user: %s, cmd: %s, args: %s", CFG.Users[uid], cmd, args))
+	res = fmt.Sprintf("Original message: %s", rawInput)
 
-END:
-	// send output to user
-	if res != "" {
-		sendTo(uid, res)
+SEND:
+	if res == "" {
+		return
+	}
+	log.Printf("action: %+v", action)
+	if action == "refresh" {
+		msg := tgbotapi.NewEditMessageTextAndMarkup(
+			u.CallbackQuery.Message.Chat.ID,
+			u.CallbackQuery.Message.MessageID,
+			res,
+			*u.CallbackQuery.Message.ReplyMarkup)
+		msg.ParseMode = tgbotapi.ModeHTML
+		_, err := Bot.Send(msg)
+		if err != nil {
+			log.Printf("Error sending callback to [%d]: %v", uid, err)
+		}
+	} else {
+		msg := tgbotapi.NewMessage(uid, "")
+		msg.ParseMode = tgbotapi.ModeHTML
+		if strings.Contains(res, "Updated:") {
+			kb := tgbotapi.NewInlineKeyboardMarkup(
+				tgbotapi.NewInlineKeyboardRow(
+					tgbotapi.NewInlineKeyboardButtonData("refresh", "refresh "+rawInput),
+					tgbotapi.NewInlineKeyboardButtonData("repeat", "repeat "+rawInput),
+				),
+			)
+			msg.ReplyMarkup = kb
+		}
+		msg.Text = res
+
+		_, err := Bot.Send(msg)
+		if err != nil {
+			log.Printf("Error sending message to [%d]: %v", uid, err)
+		}
 	}
 }
 
@@ -530,12 +579,16 @@ func main() {
 	loadConfig()
 	// serve telegram updates
 	for update := range initBot() {
-		// ignore any non-Message updates
-		if update.Message == nil {
-			continue
-		}
 		// command messages
-		if update.Message.IsCommand() {
+		if update.CallbackQuery != nil {
+			callback := tgbotapi.NewCallback(update.CallbackQuery.ID, update.CallbackQuery.Data)
+			if _, err := Bot.Request(callback); err != nil {
+				panic(err)
+			}
+			rawInputHandler(update)
+		} else if update.Message == nil {
+			continue
+		} else if update.Message.IsCommand() {
 			cmd := update.Message.Command()
 			switch cmd {
 			case "start":
@@ -547,8 +600,7 @@ func main() {
 			default:
 				cmdHelpHandler(update)
 			}
-		} else {
-			// raw messages
+		} else if update.Message != nil {
 			rawInputHandler(update)
 		}
 	}
