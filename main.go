@@ -441,7 +441,7 @@ func cmdStartHandler(u tgbotapi.Update) {
 func cmdHelpHandler(u tgbotapi.Update) {
 	uid := u.Message.From.ID
 	if !userIsAuthorized(uid) && uid != CFG.Admin {
-		return
+		cmdStartHandler(u)
 	}
 	msg := "<b>Available commands:</b>\n"
 	if uid == CFG.Admin {
@@ -495,6 +495,9 @@ func rawInputHandler(u tgbotapi.Update) {
 	} else {
 		uid = u.Message.From.ID
 		rawInput = u.Message.Text
+	}
+	if !userIsAuthorized(uid) && uid != CFG.Admin {
+		return
 	}
 	var res string // answer to user
 	cmd, args := splitArgs(rawInput)
