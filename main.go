@@ -475,84 +475,6 @@ func cmdAdminHandler(u tgbotapi.Update) {
 	}
 }
 
-///////////////////////////////////LEGACY//////////////////////////
-// sw command handler
-func cmdSwHandler(u tgbotapi.Update) {
-	uid := u.Message.From.ID
-	ip, arg := splitArgs(u.Message.CommandArguments())
-	// no arguments - return help command
-	if ip == "" {
-		cmdHelpHandler(u)
-		return
-	}
-	// ip part
-	ip = fullIP(ip, true)
-	// check ip
-	if ip == "" {
-		sendTo(uid, fmtErr("wrong switch ip"))
-		return
-	}
-	// api request for switch summary
-	resp, err := apiGet("/sw/" + ip + "/")
-	if err != nil {
-		log.Printf("API request error: %v", err)
-		sendTo(uid, fmtErr(err.Error()))
-		return
-	}
-	// serialize data from returned map to struct
-	var sw Switch
-	var res string // message answer
-	mapstructure.Decode(resp["data"], &sw)
-	// if no port - format switch full summary
-	if arg == "" {
-		res = fmtObj(sw, "sw.tmpl")
-		sendTo(uid, res)
-		return
-	}
-	// if port part exists - format switch short summary
-	res = fmtObj(sw, "sw.short.tmpl")
-
-	resp, err = apiGet("/sw/" + ip + "/ports/" + arg + "/")
-	if err != nil {
-		res += fmtErr(err.Error())
-		sendTo(uid, res)
-		return
-	}
-	// returned value is list (for combo ports - two values)
-	var ports []Port
-	mapstructure.Decode(resp["data"], &ports)
-	// format ports summary
-	res += fmtObj(ports, "ports.tmpl")
-
-	sendTo(uid, res)
-}
-
-// clear command handler
-func cmdClearHandler(u tgbotapi.Update) {
-	uid := u.Message.From.ID
-	ip, port := splitArgs(u.Message.CommandArguments())
-	// no arguments - return help command
-	if ip == "" || port == "" {
-		cmdHelpHandler(u)
-		return
-	}
-	ip = fullIP(ip, true)
-	resp, err := apiDelete(fmt.Sprintf("/sw/%s/ports/%s/errors", ip, port))
-	if err != nil {
-		log.Printf("API request error: %v", err)
-		sendTo(uid, fmtErr(err.Error()))
-		return
-	}
-	if resp["detail"] == nil {
-		log.Printf("API returned no detail, raw data: %v", resp)
-		sendTo(uid, fmtErr("Empty response"))
-		return
-	}
-	sendTo(uid, resp["detail"].(string))
-}
-
-///////////////////////////////END LEGACY//////////////////////////
-
 // parse raw input handler
 func rawInputHandler(u tgbotapi.Update) {
 	uid := u.Message.From.ID
@@ -620,12 +542,6 @@ func main() {
 				cmdStartHandler(update)
 			case "help":
 				cmdHelpHandler(update)
-				////////////////////////LEGACY/////////////////
-			case "sw":
-				cmdSwHandler(update)
-			case "clear":
-				cmdClearHandler(update)
-				////////////////////END LEGACY/////////////////
 			case "admin":
 				cmdAdminHandler(update)
 			default:
