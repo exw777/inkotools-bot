@@ -73,6 +73,22 @@ type Pair struct {
 	Len   int    `mapstructure:"len"`
 }
 
+// PortCounters type
+type PortCounters struct {
+	TotalRX  uint        `mapstructure:"rx_total"`
+	TotalTX  uint        `mapstructure:"tx_total"`
+	SpeedRX  uint        `mapstructure:"rx_speed"`
+	SpeedTX  uint        `mapstructure:"tx_speed"`
+	ErrorsRX []PortError `mapstructure:"rx_errors"`
+	ErrorsTX []PortError `mapstructure:"tx_errors"`
+}
+
+// PortError type
+type PortError struct {
+	Name  string `mapstructure:"name"`
+	Count int    `mapstructure:"count"`
+}
+
 // XCHAR - unicode symbol X
 const XCHAR string = "\xE2\x9D\x8C"
 
@@ -163,6 +179,23 @@ func fmtObj(obj interface{}, tpl string) string {
 	return buf.String()
 }
 
+// print bytes in human readable format
+func fmtBytes(bytes uint, toBits bool) string {
+	var ratio float64 = 1024
+	units := [5]string{"B", "KB", "MB", "GB", "TB"}
+	if toBits {
+		ratio = 1000
+		units = [5]string{"bit", "Kbit", "Mbit", "Gbit", "Tbit"}
+		bytes *= 8
+	}
+	res := float64(bytes)
+	i := 0
+	for ; res >= ratio && i < len(units); i++ {
+		res /= ratio
+	}
+	return fmt.Sprintf("%.2f %s", res, units[i])
+}
+
 // debug log
 func logDebug(msg string) {
 	if CFG.DebugMode {
@@ -219,8 +252,12 @@ func loadConfig() error {
 		return err
 	}
 	log.Printf("Config loaded from %s", CFGFILE)
+	// Template functions
+	funcMap := template.FuncMap{
+		"fmtBytes": fmtBytes,
+	}
 	// load templates
-	TPL, err = template.New("templates").ParseGlob("templates/*")
+	TPL, err = template.New("templates").Funcs(funcMap).ParseGlob("templates/*")
 	if err != nil {
 		log.Printf("Parse templates error: %v", err)
 		return err
@@ -394,6 +431,7 @@ func swSummary(ip string, style string) string {
 
 // get port summary and format it with template
 func portSummary(ip string, port string, style string) string {
+	var res string
 	resp, err := apiGet(fmt.Sprintf("/sw/%s/ports/%s/", ip, port))
 	if err != nil {
 		return fmtErr(err.Error())
@@ -401,18 +439,29 @@ func portSummary(ip string, port string, style string) string {
 	// returned value is list (for combo ports - two values)
 	var ports []Port
 	mapstructure.Decode(resp["data"], &ports)
+
 	// format ports summary
 	switch style {
 	case "short":
-		return fmtObj(ports, "ports.tmpl") + printUpdated()
+		res += fmtObj(ports, "ports.tmpl")
+		//get port counters
+		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/counters", ip, port))
+		if err == nil {
+			var counters PortCounters
+			mapstructure.Decode(resp["data"], &counters)
+			res += fmtObj(counters, "counters.tmpl")
+		}
+		res += printUpdated()
 	default:
-		return fmtObj(ports, "ports.tmpl")
+		res += fmtObj(ports, "ports.tmpl")
 	}
+
+	return res
 }
 
 // clear port counters
 func portClear(ip string, port string) string {
-	resp, err := apiDelete(fmt.Sprintf("/sw/%s/ports/%s/errors", ip, port))
+	resp, err := apiDelete(fmt.Sprintf("/sw/%s/ports/%s/counters", ip, port))
 	if err != nil {
 		return fmtErr(err.Error())
 	}
@@ -492,13 +541,16 @@ func rawInputHandler(u tgbotapi.Update) {
 	if u.CallbackQuery != nil {
 		uid = u.CallbackQuery.Message.Chat.ID
 		action, rawInput = splitArgs(u.CallbackQuery.Data)
+
 	} else {
 		uid = u.Message.From.ID
 		rawInput = u.Message.Text
+		action = "send"
 	}
 	if !userIsAuthorized(uid) && uid != CFG.Admin {
 		return
 	}
+
 	var res string // answer to user
 	cmd, args := splitArgs(rawInput)
 	// check if cmd is ip
@@ -507,6 +559,10 @@ func rawInputHandler(u tgbotapi.Update) {
 		if fullIP(ip, true) != "" {
 			// ip is sw ip
 			port, args := splitArgs(args)
+			if action == "clear" {
+				portClear(ip, port)
+				action = "refresh"
+			}
 			res = swHandler(ip, port, args)
 			goto SEND
 		}
@@ -522,7 +578,7 @@ SEND:
 	if res == "" {
 		return
 	}
-	log.Printf("action: %+v", action)
+	log.Printf("[%s] %s %s", CFG.Users[uid], action, rawInput)
 	if action == "refresh" {
 		msg := tgbotapi.NewEditMessageTextAndMarkup(
 			u.CallbackQuery.Message.Chat.ID,
@@ -541,6 +597,7 @@ SEND:
 			kb := tgbotapi.NewInlineKeyboardMarkup(
 				tgbotapi.NewInlineKeyboardRow(
 					tgbotapi.NewInlineKeyboardButtonData("refresh", "refresh "+rawInput),
+					tgbotapi.NewInlineKeyboardButtonData("clear", "clear "+rawInput),
 					tgbotapi.NewInlineKeyboardButtonData("repeat", "repeat "+rawInput),
 				),
 			)
