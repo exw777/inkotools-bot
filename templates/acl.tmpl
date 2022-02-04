@@ -2,5 +2,6 @@
 <i>ACL: </i>
 {{- if not . }}{{ $warning }}<b>No rules!</b>{{ end }}
 {{- range . }}
-<code>{{ .IP | printf "%-16s" }}</code> <code>{{ .Mask | printf "%-16s" }}</code> <code>{{ .Mode }}</code>
+<code>{{ .IP | printf "%-16s" }}</code>
+<code>{{ .Mask | printf "%-16s" }}</code> <code>{{ .Mode }}</code>
 {{- end }}
