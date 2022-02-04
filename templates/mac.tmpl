@@ -1,0 +1,10 @@
+{{- $warning := "\xE2\x9A\xA0" }}
+<i>MAC Table: </i>
+{{- if not . }}<code>empty</code>{{ end }}
+{{- if gt (len .) 10 }}
+{{ $warning }}More than 10 entries, pagination not supported yet...
+{{- else }}
+{{- range . }}
+<code>{{ .VlanID | printf "%-10d" }}</code> <code>{{ .Mac }}</code>
+{{- end }}
+{{- end }}

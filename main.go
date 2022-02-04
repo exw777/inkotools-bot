@@ -89,6 +89,30 @@ type PortError struct {
 	Count int    `mapstructure:"count"`
 }
 
+// PortVlan type
+type PortVlan struct {
+	Port     int   `mapstructure:"port"`
+	Untagged []int `mapstructure:"untagged"`
+	Tagged   []int `mapstructure:"tagged"`
+}
+
+// PortMac type
+type PortMac struct {
+	Port   int    `mapstructure:"port"`
+	VlanID int    `mapstructure:"vid"`
+	Mac    string `mapstructure:"mac"`
+}
+
+// PortACL type
+type PortACL struct {
+	Port      int    `mapstructure:"port"`
+	ProfileID int    `mapstructure:"profile_id"`
+	AccessID  int    `mapstructure:"access_id"`
+	IP        string `mapstructure:"ip"`
+	Mask      string `mapstructure:"mask"`
+	Mode      string `mapstructure:"mode"`
+}
+
 // XCHAR - unicode symbol X
 const XCHAR string = "\xE2\x9D\x8C"
 
@@ -120,6 +144,7 @@ Each <b><i>argument</i></b> can be in abbreviated form (e.g. <code>cl</code> and
 
 Supported arguments:
 <code>clear</code> - clear port counters
+<code>full</code> - print additional port information
 
 <b>Other commands:</b>
 /help - print this help
@@ -439,22 +464,40 @@ func portSummary(ip string, port string, style string) string {
 	// returned value is list (for combo ports - two values)
 	var ports []Port
 	mapstructure.Decode(resp["data"], &ports)
-
+	res += fmtObj(ports, "ports.tmpl")
 	// format ports summary
-	switch style {
-	case "short":
-		res += fmtObj(ports, "ports.tmpl")
-		//get port counters
-		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/counters", ip, port))
-		if err == nil {
-			var counters PortCounters
-			mapstructure.Decode(resp["data"], &counters)
-			res += fmtObj(counters, "counters.tmpl")
-		}
-		res += printUpdated()
-	default:
-		res += fmtObj(ports, "ports.tmpl")
+
+	//get port counters
+	resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/counters", ip, port))
+	if err == nil {
+		var counters PortCounters
+		mapstructure.Decode(resp["data"], &counters)
+		res += fmtObj(counters, "counters.tmpl")
 	}
+	if style == "full" {
+		// get acl
+		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/acl", ip, port))
+		if err == nil {
+			var acl []PortACL
+			mapstructure.Decode(resp["data"], &acl)
+			res += fmtObj(acl, "acl.tmpl")
+		}
+		// get mac table
+		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/mac", ip, port))
+		if err == nil {
+			var macTable []PortMac
+			mapstructure.Decode(resp["data"], &macTable)
+			res += fmtObj(macTable, "mac.tmpl")
+		}
+		// get vlan
+		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/vlan", ip, port))
+		if err == nil {
+			var v PortVlan
+			mapstructure.Decode(resp["data"], &v)
+			res += fmtObj(v, "vlan.tmpl")
+		}
+	}
+	res += printUpdated()
 
 	return res
 }
@@ -580,6 +623,10 @@ SEND:
 	}
 	log.Printf("[%s] %s %s", CFG.Users[uid], action, rawInput)
 	if action == "refresh" {
+		cb := tgbotapi.NewCallback(u.CallbackQuery.ID, u.CallbackQuery.Data)
+		if _, err := Bot.Request(cb); err != nil {
+			log.Printf("Error sending callback to [%d]: %v", uid, err)
+		}
 		msg := tgbotapi.NewEditMessageTextAndMarkup(
 			u.CallbackQuery.Message.Chat.ID,
 			u.CallbackQuery.Message.MessageID,
@@ -588,7 +635,7 @@ SEND:
 		msg.ParseMode = tgbotapi.ModeHTML
 		_, err := Bot.Send(msg)
 		if err != nil {
-			log.Printf("Error sending callback to [%d]: %v", uid, err)
+			log.Printf("Error sending updated message to [%d]: %v", uid, err)
 		}
 	} else {
 		msg := tgbotapi.NewMessage(uid, "")
@@ -641,10 +688,6 @@ func main() {
 	for update := range initBot() {
 		// command messages
 		if update.CallbackQuery != nil {
-			callback := tgbotapi.NewCallback(update.CallbackQuery.ID, update.CallbackQuery.Data)
-			if _, err := Bot.Request(callback); err != nil {
-				panic(err)
-			}
 			rawInputHandler(update)
 		} else if update.Message == nil {
 			continue

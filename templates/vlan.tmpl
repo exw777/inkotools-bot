@@ -1,0 +1,8 @@
+{{- if .Untagged }}
+<i>VLAN untagged: </i>
+{{- range .Untagged -}}<code>{{ . }}</code> {{ end }}
+{{- end }}
+{{- if .Tagged }}
+<i>VLAN tagged: </i>
+{{- range .Tagged -}}<code>{{ . }}</code> {{ end }}
+{{ end }}
