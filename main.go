@@ -439,19 +439,25 @@ func apiDelete(endpoint string) (map[string]interface{}, error) {
 
 // get switch summary and format it with template
 func swSummary(ip string, style string) string {
-	resp, err := apiGet(fmt.Sprintf("/sw/%s/", ip))
+	var route string
+	var template string
+	switch style {
+	case "short":
+		route = fmt.Sprintf("/db/sw/%s/", ip)
+		template = "sw.short.tmpl"
+	default:
+		route = fmt.Sprintf("/sw/%s/", ip)
+		template = "sw.tmpl"
+	}
+
+	resp, err := apiGet(route)
 	if err != nil {
 		return fmtErr(err.Error())
 	}
 	// serialize data from returned map to struct
 	var sw Switch
 	mapstructure.Decode(resp["data"], &sw)
-	switch style {
-	case "short":
-		return fmtObj(sw, "sw.short.tmpl")
-	default:
-		return fmtObj(sw, "sw.tmpl")
-	}
+	return fmtObj(sw, template)
 }
 
 // get port summary and format it with template
@@ -661,18 +667,26 @@ SEND:
 
 // switch ip handler
 func swHandler(ip string, port string, args string) string {
+	var res string
 	switch {
 	case port == "":
-		return swSummary(ip, "full")
+		res = swSummary(ip, "full")
 	case args == "":
-		return swSummary(ip, "short") + portSummary(ip, port, "short")
+		res = swSummary(ip, "short")
+		if !strings.Contains(res, "ERROR") {
+			res += portSummary(ip, port, "short")
+		}
 	case strings.HasPrefix("full", args):
-		return swSummary(ip, "short") + portSummary(ip, port, "full")
+		res = swSummary(ip, "short")
+		if !strings.Contains(res, "ERROR") {
+			res += portSummary(ip, port, "full")
+		}
 	case strings.HasPrefix("clear", args):
-		return portClear(ip, port)
+		res = portClear(ip, port)
 	default:
-		return ""
+		res = ""
 	}
+	return res
 }
 
 // client ip handler
