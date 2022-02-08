@@ -1,10 +1,7 @@
 {{- $warning := "\xE2\x9A\xA0" }}
-<i>MAC Table: </i>
+<i>ARP Table: </i>
 {{- if not . }}{{ $warning }}<code>empty</code>{{ end }}
-{{- if gt (len .) 25 }}
-{{ $warning }}{{ len . }} entries, pagination not supported yet...
-{{- else }}
 {{- range . }}
+<code>{{ .IP }}</code>
 <code>{{ .Mac }}</code><code>{{ .VlanID | printf "%8d" }}</code>
-{{- end }}
 {{- end }}

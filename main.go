@@ -121,6 +121,13 @@ type IPCalc struct {
 	Prefix  int    `mapstructure:"prefix"`
 }
 
+// ARPEntry type
+type ARPEntry struct {
+	IP     string `mapstructure:"ip"`
+	Mac    string `mapstructure:"mac"`
+	VlanID int    `mapstructure:"vid"`
+}
+
 // XCHAR - unicode symbol X
 const XCHAR string = "\xE2\x9D\x8C"
 
@@ -474,45 +481,72 @@ func swSummary(ip string, style string) string {
 // get port summary and format it with template
 func portSummary(ip string, port string, style string) string {
 	var res string
+	var ports []Port
+	var linkUp bool
+	var counters PortCounters
 	resp, err := apiGet(fmt.Sprintf("/sw/%s/ports/%s/", ip, port))
 	if err != nil {
 		return fmtErr(err.Error())
 	}
 	// returned value is list (for combo ports - two values)
-	var ports []Port
 	mapstructure.Decode(resp["data"], &ports)
-	res += fmtObj(ports, "ports.tmpl")
 	// format ports summary
-
+	res += fmtObj(ports, "ports.tmpl")
+	for p := range ports {
+		if ports[p].Link {
+			linkUp = true
+			break
+		}
+	}
 	//get port counters
 	resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/counters", ip, port))
 	if err == nil {
-		var counters PortCounters
 		mapstructure.Decode(resp["data"], &counters)
 		res += fmtObj(counters, "counters.tmpl")
 	}
 	if style == "full" {
-		// get acl
-		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/acl", ip, port))
-		if err == nil {
-			var acl []PortACL
-			mapstructure.Decode(resp["data"], &acl)
-			res += fmtObj(acl, "acl.tmpl")
-		}
-		// get mac table
-		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/mac", ip, port))
-		if err == nil {
-			var macTable []PortMac
-			mapstructure.Decode(resp["data"], &macTable)
-			res += fmtObj(macTable, "mac.tmpl")
-		}
+		var v PortVlan
+		var acl []PortACL
+		var macTable []PortMac
+		var arpTable []ARPEntry
 		// get vlan
 		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/vlan", ip, port))
 		if err == nil {
-			var v PortVlan
 			mapstructure.Decode(resp["data"], &v)
 			res += fmtObj(v, "vlan.tmpl")
 		}
+		// get acl
+		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/acl", ip, port))
+		if err == nil {
+			mapstructure.Decode(resp["data"], &acl)
+			res += fmtObj(acl, "acl.tmpl")
+		}
+		// get mac table only if link is up
+		if !linkUp {
+			goto END
+		}
+		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/mac", ip, port))
+		if err == nil {
+			mapstructure.Decode(resp["data"], &macTable)
+			res += fmtObj(macTable, "mac.tmpl")
+		}
+		// get arp table for acl permit ip
+		// only if mac address table is not empty
+		if len(macTable) == 0 {
+			goto END
+		}
+		for i := range acl {
+			if acl[i].Mode == "permit" {
+				resp, err = requestAPI("POST", "/arpsearch", map[string]interface{}{"ip": acl[i].IP})
+				if err == nil {
+					mapstructure.Decode(resp["data"], &arpTable)
+					res += fmtObj(arpTable, "arp.tmpl")
+				} else {
+					res += fmtErr(err.Error())
+				}
+			}
+		}
+	END:
 	}
 	res += printUpdated()
 
