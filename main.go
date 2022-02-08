@@ -113,6 +113,14 @@ type PortACL struct {
 	Mode      string `mapstructure:"mode"`
 }
 
+// IPCalc type
+type IPCalc struct {
+	IP      string `mapstructure:"ip"`
+	Mask    string `mapstructure:"mask"`
+	Gateway string `mapstructure:"gateway"`
+	Prefix  int    `mapstructure:"prefix"`
+}
+
 // XCHAR - unicode symbol X
 const XCHAR string = "\xE2\x9D\x8C"
 
@@ -145,6 +153,9 @@ Each <b><i>argument</i></b> can be in abbreviated form (e.g. <code>cl</code> and
 Supported arguments:
 <code>clear</code> - clear port counters
 <code>full</code> - print additional port information
+
+Client commands:
+<code>IP</code> - get client ip address summary (ip, mask, gateway, prefix)
 
 <b>Other commands:</b>
 /help - print this help
@@ -521,6 +532,19 @@ func portClear(ip string, port string) string {
 	return resp["detail"].(string)
 }
 
+// get ip summary
+func ipCalc(ip string) string {
+	var res string
+	resp, err := apiGet(fmt.Sprintf("/ipcalc/%s/", ip))
+	if err != nil {
+		return fmtErr(err.Error())
+	}
+	var calc IPCalc
+	mapstructure.Decode(resp["data"], &calc)
+	res += fmtObj(calc, "ipcalc.tmpl")
+	return res
+}
+
 // TELEGRAM COMMANDS HANDLERS
 
 // start command handler
@@ -691,8 +715,8 @@ func swHandler(ip string, port string, args string) string {
 
 // client ip handler
 func ipHandler(ip string, args string) string {
-	// not implemented yet
-	return ""
+	// dummy calculator
+	return ipCalc(ip)
 }
 
 // MAIN APP
