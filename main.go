@@ -127,6 +127,7 @@ type ARPEntry struct {
 	IP     string `mapstructure:"ip"`
 	Mac    string `mapstructure:"mac"`
 	VlanID int    `mapstructure:"vid"`
+	State  bool   `mapstructure:"state"`
 }
 
 // XCHAR - unicode symbol X
