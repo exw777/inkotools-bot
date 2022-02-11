@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"text/template"
@@ -509,11 +510,21 @@ func portSummary(ip string, port string, style string) string {
 		var acl []PortACL
 		var macTable []PortMac
 		var arpTable []ARPEntry
+		var arpTmp []ARPEntry
+		var accessPorts []int
 		// get vlan
 		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/vlan", ip, port))
 		if err == nil {
 			mapstructure.Decode(resp["data"], &v)
 			res += fmtObj(v, "vlan.tmpl")
+		}
+		// acl, mac and arp only for access ports
+		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/", ip))
+		if err == nil {
+			mapstructure.Decode(resp["data"].(map[string]interface{})["access_ports"], &accessPorts)
+		}
+		if sort.SearchInts(accessPorts, ports[0].Port) == len(accessPorts) {
+			goto END
 		}
 		// get acl
 		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/acl", ip, port))
@@ -530,22 +541,52 @@ func portSummary(ip string, port string, style string) string {
 			mapstructure.Decode(resp["data"], &macTable)
 			res += fmtObj(macTable, "mac.tmpl")
 		}
-		// get arp table for acl permit ip
 		// only if mac address table is not empty
 		if len(macTable) == 0 {
 			goto END
 		}
-		for i := range acl {
-			if acl[i].Mode == "permit" {
-				resp, err = requestAPI("POST", "/arpsearch", map[string]interface{}{"ip": acl[i].IP})
+		// get arp table for acl permit ip
+		for _, a := range acl {
+			if a.Mode == "permit" {
+				resp, err = requestAPI("POST", "/arpsearch", map[string]interface{}{"ip": a.IP})
 				if err == nil {
-					mapstructure.Decode(resp["data"], &arpTable)
-					res += fmtObj(arpTable, "arp.tmpl")
+					mapstructure.Decode(resp["data"], &arpTmp)
+					// append to global arp
+					arpTable = append(arpTable, arpTmp...)
 				} else {
-					res += fmtErr(err.Error())
+					res += fmtErr("Failed to get arp by ip")
 				}
 			}
 		}
+		// get arp for each mac address
+		for _, m := range macTable {
+			resp, err = requestAPI("POST", "/arpsearch", map[string]interface{}{"mac": m.Mac, "src_sw_ip": ip})
+			if err == nil {
+				mapstructure.Decode(resp["data"], &arpTmp)
+				// append to global arp
+				arpTable = append(arpTable, arpTmp...)
+			} else {
+				res += fmtErr("Failed to get arp by mac")
+			}
+		}
+		// remove duplicate entries from global arp table
+		arpTmp = arpTable
+		arpTable = nil
+		for _, a := range arpTmp {
+			dup := false
+			for _, u := range arpTable {
+				if u == a {
+					dup = true
+					break
+				}
+			}
+			if !dup {
+				arpTable = append(arpTable, a)
+			}
+		}
+
+		res += fmtObj(arpTable, "arp.tmpl")
+
 	END:
 	}
 	res += printUpdated()
