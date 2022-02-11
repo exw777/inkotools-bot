@@ -457,25 +457,25 @@ func apiDelete(endpoint string) (map[string]interface{}, error) {
 
 // get switch summary and format it with template
 func swSummary(ip string, style string) string {
-	var route string
 	var template string
 	switch style {
 	case "short":
-		route = fmt.Sprintf("/db/sw/%s/", ip)
 		template = "sw.short.tmpl"
 	default:
-		route = fmt.Sprintf("/sw/%s/", ip)
 		template = "sw.tmpl"
 	}
-
-	resp, err := apiGet(route)
+	resp, err := apiGet(fmt.Sprintf("/sw/%s/", ip))
 	if err != nil {
 		return fmtErr(err.Error())
 	}
 	// serialize data from returned map to struct
 	var sw Switch
 	mapstructure.Decode(resp["data"], &sw)
-	return fmtObj(sw, template)
+	res := fmtObj(sw, template)
+	if !sw.Status {
+		res += fmtErr("Switch is unavailable!")
+	}
+	return res
 }
 
 // get port summary and format it with template
