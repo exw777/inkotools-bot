@@ -150,6 +150,8 @@ const WARNCHAR string = "\xE2\x80\xBC"
 
 // HELPUSER - help string for user
 const HELPUSER string = `
+<b>Available commands:</b>
+
 Switch commands:
 <code>IP</code> - get switch full summary
 <code>IP PORT</code> - get short switch and short port summary
@@ -333,11 +335,11 @@ func saveConfig() error {
 }
 
 // add/delete user
-func manageUser(args string, enabled bool) {
+func manageUser(args string, enabled bool) string {
 	u, name := splitArgs(args)
 	uid, err := strconv.ParseInt(u, 10, 64)
 	if err != nil || uid == 0 {
-		return
+		return fmtErr("Wrong uid")
 	}
 	var msgUser, msgAdmin string
 	if enabled && !userIsAuthorized(uid) {
@@ -351,34 +353,91 @@ func manageUser(args string, enabled bool) {
 		msgAdmin = fmt.Sprintf("User <code>%d</code> <b>%s</b> removed.",
 			uid, CFG.Users[uid])
 	} else {
-		return
+		return "Nothing to do"
 	}
 	logDebug(msgAdmin)
 	saveConfig()
 	sendTo(uid, msgUser)
-	sendTo(CFG.Admin, msgAdmin)
+	return msgAdmin
 }
 
-// send text message to user
-func sendTo(id int64, text string) (tgbotapi.Message, error) {
+// send text message with inline keyboard to user
+func sendMessage(id int64, text string, kb tgbotapi.InlineKeyboardMarkup) error {
 	msg := tgbotapi.NewMessage(id, text)
 	msg.ParseMode = tgbotapi.ModeHTML
-	res, err := Bot.Send(msg)
+	msg.ReplyMarkup = kb
+	_, err := Bot.Send(msg)
 	if err != nil {
-		log.Printf("Error sendTo[%d]: %v", id, err)
+		log.Printf("[ERROR] failed to send message to [%d]: %v", id, err)
 	}
-	return res, err
+	return err
+}
+
+// edit message with inline keyboard
+func editMessage(m *tgbotapi.Message, textNew string, kbNew tgbotapi.InlineKeyboardMarkup, kbReplace bool) error {
+	var kb tgbotapi.InlineKeyboardMarkup
+	if kbReplace {
+		kb = kbNew
+	} else {
+		kb = *m.ReplyMarkup
+	}
+	msg := tgbotapi.NewEditMessageTextAndMarkup(m.Chat.ID, m.MessageID, textNew, kb)
+	msg.ParseMode = tgbotapi.ModeHTML
+	_, err := Bot.Send(msg)
+	if err != nil {
+		log.Printf("[ERROR] failed to edit message: %v", err)
+	}
+	return err
+}
+
+// generate keyboard markup from matrix
+func genKeyboard(matrix [][]map[string]string) tgbotapi.InlineKeyboardMarkup {
+	var kb [][]tgbotapi.InlineKeyboardButton
+	for _, rows := range matrix {
+		var row []tgbotapi.InlineKeyboardButton
+		for _, cols := range rows {
+			for key, val := range cols {
+				btn := tgbotapi.NewInlineKeyboardButtonData(key, val)
+				row = append(row, btn)
+			}
+		}
+		kb = append(kb, row)
+	}
+	return tgbotapi.InlineKeyboardMarkup{
+		InlineKeyboard: kb,
+	}
+}
+
+// shortcut for edit only text
+func editText(m *tgbotapi.Message, txt string) error {
+	return editMessage(m, txt, tgbotapi.InlineKeyboardMarkup{[][]tgbotapi.InlineKeyboardButton{}}, false)
+}
+
+// shortcut for edit text and keyboard
+func editTextAndKeyboard(m *tgbotapi.Message, txt string, kb tgbotapi.InlineKeyboardMarkup) error {
+	return editMessage(m, txt, kb, true)
+}
+
+// shortcut for simple text message
+func sendTo(id int64, text string) error {
+	return sendMessage(id, text, tgbotapi.InlineKeyboardMarkup{[][]tgbotapi.InlineKeyboardButton{}})
 }
 
 // broadcast message to all users
-func broadcastSend(text string) {
+func broadcastSend(text string) string {
+	var res string
 	if text == "" {
-		sendTo(CFG.Admin, fmtErr("empty message"))
-		return
+		return fmtErr("empty message")
 	}
 	for uid := range CFG.Users {
-		sendTo(uid, text)
+		err := sendTo(uid, text)
+		if err == nil {
+			res += fmt.Sprintf("%d OK\n", uid)
+		} else {
+			res += fmt.Sprintf("%d failed: %v\n", uid, err)
+		}
 	}
+	return res
 }
 
 // universal api request
@@ -623,170 +682,111 @@ func ipCalc(ip string) string {
 
 // TELEGRAM COMMANDS HANDLERS
 
-// start command handler
-func cmdStartHandler(u tgbotapi.Update) {
-	user := u.Message.From
-	if userIsAuthorized(user.ID) {
-		cmdHelpHandler(u)
-	} else {
-		msg := fmt.Sprintf("User <b>%s</b> requests authorization:\n"+
-			"id: <code>%d</code>", user, user.ID)
-		sendTo(CFG.Admin, msg)
-	}
-}
-
-// help command handler
-func cmdHelpHandler(u tgbotapi.Update) {
-	uid := u.Message.From.ID
-	if !userIsAuthorized(uid) && uid != CFG.Admin {
-		cmdStartHandler(u)
-	}
-	msg := "<b>Available commands:</b>\n"
-	if uid == CFG.Admin {
-		msg += HELPADMIN
-	}
-	if userIsAuthorized(uid) {
-		msg += HELPUSER
-	}
-	sendTo(uid, msg)
+// new user handler
+func newUserHandler(u *tgbotapi.User) {
+	msg := fmt.Sprintf("User <a href=\"tg://user?id=%d\">%s</a> "+
+		" requests authorization:\nid: <code>%d</code>", u.ID, u, u.ID)
+	sendTo(CFG.Admin, msg)
+	sendTo(u.ID, "Your request is accepted. Waiting confirmation from admin.")
 }
 
 // admin command handler
-func cmdAdminHandler(u tgbotapi.Update) {
-	// exit if user is not admin
-	if u.Message.From.ID != CFG.Admin {
-		return
-	}
-	cmd, arg := splitArgs(u.Message.CommandArguments())
+func cmdAdminHandler(args string) {
+	cmd, arg := splitArgs(args)
+	var res string
+	var err error
 	switch cmd {
 	case "list":
-		var lst string
 		for id, name := range CFG.Users {
-			lst += fmt.Sprintf("<code>%d</code> - %s\n", id, name)
+			res += fmt.Sprintf(
+				"<code>%d</code> - <a href=\"tg://user?id=%d\">%s</a>\n", id, id, name)
 		}
-		sendTo(CFG.Admin, lst)
 	case "add":
-		manageUser(arg, true)
+		res = manageUser(arg, true)
 	case "del":
-		manageUser(arg, false)
+		res = manageUser(arg, false)
 	case "send":
 		user, text := splitArgs(arg)
 		id, _ := strconv.ParseInt(user, 10, 64)
-		sendTo(id, text)
+		err = sendTo(id, text)
+		if err == nil {
+			res = "Message sent"
+		} else {
+			res = fmt.Sprintf("Message not sent: %v", err)
+		}
 	case "broadcast":
-		broadcastSend(arg)
+		res = broadcastSend(arg)
 	case "reload":
-		loadConfig()
+		err = loadConfig()
+		if err != nil {
+			res = "Config reloaded"
+		}
 	default:
-		cmdHelpHandler(u)
+		res = HELPADMIN
 	}
+	sendTo(CFG.Admin, res)
 }
 
 // parse raw input handler
-func rawInputHandler(u tgbotapi.Update) {
-	var uid int64
-	var rawInput string
-	var action string
-	if u.CallbackQuery != nil {
-		uid = u.CallbackQuery.Message.Chat.ID
-		action, rawInput = splitArgs(u.CallbackQuery.Data)
-
-	} else {
-		uid = u.Message.From.ID
-		rawInput = u.Message.Text
-		action = "send"
-	}
-	if !userIsAuthorized(uid) && uid != CFG.Admin {
-		return
-	}
-
-	var res string // answer to user
-	cmd, args := splitArgs(rawInput)
-	// check if cmd is ip
+func rawInputHandler(raw string) (string, tgbotapi.InlineKeyboardMarkup) {
+	var res string                       // text message result
+	var kb tgbotapi.InlineKeyboardMarkup // inline keyboard markup
+	cmd, args := splitArgs(raw)
 	ip := fullIP(cmd, false)
-	if ip != "" {
+	switch {
+	// cmd is ip address
+	case ip != "":
+		// ip is sw ip
 		if fullIP(ip, true) != "" {
-			// ip is sw ip
 			port, args := splitArgs(args)
-			if action == "clear" {
-				portClear(ip, port)
-				action = "refresh"
-			}
-			res = swHandler(ip, port, args)
-			goto SEND
-		}
-		// ip is client ip
-		res = ipHandler(ip, args)
-		goto SEND
-	}
-
-	logDebug(fmt.Sprintf("user: %s, cmd: %s, args: %s", CFG.Users[uid], cmd, args))
-	res = fmt.Sprintf("Original message: %s", rawInput)
-
-SEND:
-	if res == "" {
-		return
-	}
-	log.Printf("[%s] %s %s", CFG.Users[uid], action, rawInput)
-	if action == "refresh" {
-		cb := tgbotapi.NewCallback(u.CallbackQuery.ID, u.CallbackQuery.Data)
-		if _, err := Bot.Request(cb); err != nil {
-			log.Printf("Error sending callback to [%d]: %v", uid, err)
-		}
-		msg := tgbotapi.NewEditMessageTextAndMarkup(
-			u.CallbackQuery.Message.Chat.ID,
-			u.CallbackQuery.Message.MessageID,
-			res,
-			*u.CallbackQuery.Message.ReplyMarkup)
-		msg.ParseMode = tgbotapi.ModeHTML
-		_, err := Bot.Send(msg)
-		if err != nil {
-			log.Printf("Error sending updated message to [%d]: %v", uid, err)
-		}
-	} else {
-		msg := tgbotapi.NewMessage(uid, "")
-		msg.ParseMode = tgbotapi.ModeHTML
-		if strings.Contains(res, "Updated:") {
-			kb := tgbotapi.NewInlineKeyboardMarkup(
-				tgbotapi.NewInlineKeyboardRow(
-					tgbotapi.NewInlineKeyboardButtonData("refresh", "refresh "+rawInput),
-					tgbotapi.NewInlineKeyboardButtonData("clear", "clear "+rawInput),
-					tgbotapi.NewInlineKeyboardButtonData("repeat", "repeat "+rawInput),
-				),
-			)
-			msg.ReplyMarkup = kb
-		}
-		msg.Text = res
-
-		_, err := Bot.Send(msg)
-		if err != nil {
-			log.Printf("Error sending message to [%d]: %v", uid, err)
+			res, kb = swHandler(ip, port, args)
+			// ip is client ip
+		} else {
+			res = ipHandler(ip, args)
 		}
 	}
+	return res, kb
 }
 
 // switch ip handler
-func swHandler(ip string, port string, args string) string {
-	var res string
-	switch {
-	case port == "":
+func swHandler(ip string, port string, args string) (string, tgbotapi.InlineKeyboardMarkup) {
+	var res string                       // text message result
+	var kb tgbotapi.InlineKeyboardMarkup // inline keyboard markup
+	view := []string{"short", "full"}    // view styles for port summary
+	idx := 0                             // default index - short view
+	logDebug(fmt.Sprintf("[swHandler] ip: %s, port: %s, args: '%s'", ip, port, args))
+	if port == "" {
 		res = swSummary(ip, "full")
-	case args == "":
-		res = swSummary(ip, "short")
-		if !strings.Contains(res, "ERROR") {
-			res += portSummary(ip, port, "short")
-		}
-	case strings.HasPrefix("full", args):
-		res = swSummary(ip, "short")
-		if !strings.Contains(res, "ERROR") {
-			res += portSummary(ip, port, "full")
-		}
-	case strings.HasPrefix("clear", args):
-		res = portClear(ip, port)
-	default:
-		res = ""
+		goto RETURN
 	}
-	return res
+	// clear counters if needed
+	if strings.Contains(args, "clear") {
+		logDebug(fmt.Sprintf("Clear result: %s", portClear(ip, port)))
+	}
+	// second part is for backward compatibility (arg f[ull] in raw command)
+	if strings.Contains(args, "full") || args != "" && strings.HasPrefix("full", args) {
+		idx = 1
+	}
+	//
+	kb = genKeyboard([][]map[string]string{
+		{
+			// inverted view for full/short button calculated as (1 - idx)
+			{view[1-idx]: fmt.Sprintf("refresh %s %s %s", ip, port, view[1-idx])},
+		},
+		{
+			{"refresh": fmt.Sprintf("refresh %s %s %s", ip, port, view[idx])},
+			{"clear": fmt.Sprintf("refresh %s %s %s clear", ip, port, view[idx])},
+			{"repeat": fmt.Sprintf("repeat %s %s %s", ip, port, view[idx])},
+		},
+	})
+	// for ports switch view is always short
+	res = swSummary(ip, "short")
+	// get port summary only if no errors
+	if !strings.Contains(res, "ERROR") {
+		res += portSummary(ip, port, view[idx])
+	}
+RETURN:
+	return res, kb
 }
 
 // client ip handler
@@ -799,26 +799,68 @@ func ipHandler(ip string, args string) string {
 func main() {
 	loadConfig()
 	// serve telegram updates
-	for update := range initBot() {
-		// command messages
-		if update.CallbackQuery != nil {
-			rawInputHandler(update)
-		} else if update.Message == nil {
+	for u := range initBot() {
+		// empty updates if user blocked or restarted bot
+		if u.FromChat() == nil {
+			log.Printf("[WARNING] Empty update")
 			continue
-		} else if update.Message.IsCommand() {
-			cmd := update.Message.Command()
-			switch cmd {
-			case "start":
-				cmdStartHandler(update)
-			case "help":
-				cmdHelpHandler(update)
-			case "admin":
-				cmdAdminHandler(update)
-			default:
-				cmdHelpHandler(update)
+		}
+		uid := u.FromChat().ID
+		// for unauthorized users only start cmd is available
+		if !userIsAuthorized(uid) && uid != CFG.Admin {
+			if u.Message != nil && u.Message.Command() == "start" {
+				newUserHandler(u.SentFrom())
 			}
-		} else if update.Message != nil {
-			rawInputHandler(update)
+			// skip any other updates from unauthorized users
+			continue
+		}
+		// message updates
+		if u.Message != nil {
+			log.Printf("[INFO] [message] [%s] %s", CFG.Users[uid], u.Message.Text)
+			switch u.Message.Command() {
+			case "help":
+				sendTo(uid, HELPUSER)
+			case "start":
+				sendTo(uid, HELPUSER)
+			case "admin":
+				if uid == CFG.Admin {
+					cmdAdminHandler(u.Message.CommandArguments())
+				}
+			default:
+				res, kb := rawInputHandler(u.Message.Text)
+				if res == "" {
+					sendTo(uid, fmtErr("Failed to parse input"))
+					log.Printf("[ERROR]Failed to parse raw: %s", u.Message.Text)
+					continue
+				}
+				if len(kb.InlineKeyboard) > 0 {
+					sendMessage(uid, res, kb)
+				} else {
+					sendTo(uid, res)
+				}
+			}
+			// callback updates
+		} else if u.CallbackData() != "" {
+			log.Printf("[INFO] [callback] [%s] %s", CFG.Users[uid], u.CallbackData())
+			msg := u.CallbackQuery.Message
+			action, rawCmd := splitArgs(u.CallbackData())
+			msgText, kb := rawInputHandler(rawCmd)
+
+			switch action {
+			case "repeat":
+				if len(kb.InlineKeyboard) > 0 {
+					sendMessage(uid, msgText, kb)
+				} else {
+					sendTo(uid, msgText)
+				}
+			case "refresh":
+				if len(kb.InlineKeyboard) > 0 {
+					editTextAndKeyboard(msg, msgText, kb)
+				} else {
+					editText(msg, msgText)
+				}
+			}
+			Bot.Request(tgbotapi.NewCallback(u.CallbackQuery.ID, "Done"))
 		}
 	}
 }
