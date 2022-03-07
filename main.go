@@ -26,14 +26,20 @@ const CFGFILE string = "config.yml"
 
 // Config struct
 type Config struct {
-	BotToken      string           `yaml:"bot_token"`
-	WebhookURL    string           `yaml:"webhook_url"`
-	ListenPort    string           `yaml:"listen_port"`
-	ReportChannel int64            `yaml:"report_channel"`
-	Admin         int64            `yaml:"admin"`
-	Users         map[int64]string `yaml:"users"`
-	InkoToolsAPI  string           `yaml:"inkotools_api_url"`
-	DebugMode     bool             `yaml:"debug"`
+	BotToken      string          `yaml:"bot_token"`
+	WebhookURL    string          `yaml:"webhook_url"`
+	ListenPort    string          `yaml:"listen_port"`
+	ReportChannel int64           `yaml:"report_channel"`
+	Admin         int64           `yaml:"admin"`
+	Users         map[int64]*User `yaml:"users"`
+	InkoToolsAPI  string          `yaml:"inkotools_api_url"`
+	DebugMode     bool            `yaml:"debug"`
+}
+
+// User struct
+type User struct {
+	Name string `yaml:"name"`
+	Mode string `yaml:"-"`
 }
 
 // CFG - config object
@@ -44,9 +50,6 @@ var TPL *template.Template
 
 // Bot - bot object
 var Bot *tgbotapi.BotAPI
-
-// Mode - message handling mode (default is raw)
-var Mode string = "raw"
 
 // Switch type
 type Switch struct {
@@ -390,17 +393,17 @@ func manageUser(args string, enabled bool) string {
 	}
 	var msgUser, msgAdmin string
 	if enabled && !userIsAuthorized(uid) {
-		CFG.Users[uid] = name
-		logInfo(fmt.Sprintf("[user] %d (%s) added", uid, CFG.Users[uid]))
+		CFG.Users[uid] = &User{Name: name}
+		logInfo(fmt.Sprintf("[user] %d (%s) added", uid, CFG.Users[uid].Name))
 		msgUser = "You are added to authorized users list."
 		msgAdmin = fmt.Sprintf("User <code>%d</code> <b>%s</b> added.",
-			uid, CFG.Users[uid])
+			uid, CFG.Users[uid].Name)
 	} else if !enabled && userIsAuthorized(uid) {
-		delete(CFG.Users, uid)
-		logInfo(fmt.Sprintf("[user] %d (%s) removed", uid, CFG.Users[uid]))
+		logInfo(fmt.Sprintf("[user] %d (%s) removed", uid, CFG.Users[uid].Name))
 		msgUser = "You are removed from authorized users list."
 		msgAdmin = fmt.Sprintf("User <code>%d</code> <b>%s</b> removed.",
-			uid, CFG.Users[uid])
+			uid, CFG.Users[uid].Name)
+		delete(CFG.Users, uid)
 	} else {
 		return "Nothing to do"
 	}
@@ -416,7 +419,7 @@ func sendMessage(id int64, text string, kb tgbotapi.InlineKeyboardMarkup) error 
 	msg.ReplyMarkup = kb
 	_, err := Bot.Send(msg)
 	if err != nil {
-		logError(fmt.Sprintf("[send] [%s] %v, msg: %+v ", CFG.Users[id], err, msg))
+		logError(fmt.Sprintf("[send] [%s] %v, msg: %+v ", CFG.Users[id].Name, err, msg))
 	}
 	return err
 }
@@ -745,9 +748,9 @@ func cmdAdminHandler(args string) {
 	var err error
 	switch cmd {
 	case "list":
-		for id, name := range CFG.Users {
+		for id, u := range CFG.Users {
 			res += fmt.Sprintf(
-				"<code>%d</code> - <a href=\"tg://user?id=%d\">%s</a>\n", id, id, name)
+				"<code>%d</code> - <a href=\"tg://user?id=%d\">%s</a>\n", id, id, u.Name)
 		}
 	case "add":
 		res = manageUser(arg, true)
@@ -771,7 +774,7 @@ func cmdAdminHandler(args string) {
 		} else {
 			res = "Config reloaded"
 		}
-	case "help":
+	default:
 		res = HELPADMIN
 	}
 	sendTo(CFG.Admin, res)
@@ -866,7 +869,7 @@ func main() {
 		}
 		// message updates
 		if u.Message != nil {
-			logInfo(fmt.Sprintf("[message] [%s] %s", CFG.Users[uid], u.Message.Text))
+			logInfo(fmt.Sprintf("[message] [%s] %s", CFG.Users[uid].Name, u.Message.Text))
 			switch u.Message.Command() {
 			case "help":
 				sendTo(uid, HELPUSER)
@@ -874,33 +877,23 @@ func main() {
 				sendTo(uid, HELPUSER)
 			case "admin":
 				if uid == CFG.Admin {
-					Mode = "admin"
+					CFG.Users[uid].Mode = "admin"
 					sendTo(uid, "You are in admin mode")
 				} else {
 					sendTo(uid, "You have no permissions to work in this mode")
 				}
 			case "raw":
-				Mode = "raw"
+				CFG.Users[uid].Mode = "raw"
 				sendTo(uid, "You are in raw command mode.")
 			case "report":
 				sendTo(uid, "You are in report mode. "+
 					"Send message with your report, you can also attach screenshots or other media.\n"+
 					"To cancel and return to raw command mode, send /raw.")
-				Mode = "report"
+				CFG.Users[uid].Mode = "report"
 			default:
-				switch Mode {
-				case "raw":
-					res, kb := rawInputHandler(u.Message.Text)
-					if res == "" {
-						sendTo(uid, fmtErr("Failed to parse input"))
-						logError(fmt.Sprintf("Failed to parse input, raw: %s", u.Message.Text))
-						continue
-					}
-					if len(kb.InlineKeyboard) > 0 {
-						sendMessage(uid, res, kb)
-					} else {
-						sendTo(uid, res)
-					}
+				switch CFG.Users[uid].Mode {
+				case "admin":
+					cmdAdminHandler(u.Message.Text)
 				case "report":
 					fwd := tgbotapi.NewForward(CFG.ReportChannel, uid, u.Message.MessageID)
 					_, err := Bot.Send(fwd)
@@ -913,13 +906,23 @@ func main() {
 					}
 					res += "Send another message or return to raw command mode by sending /raw."
 					sendTo(uid, res)
-				case "admin":
-					cmdAdminHandler(u.Message.Text)
+				default: // raw mode
+					res, kb := rawInputHandler(u.Message.Text)
+					if res == "" {
+						sendTo(uid, fmtErr("Failed to parse input"))
+						logError(fmt.Sprintf("Failed to parse input, raw: %s", u.Message.Text))
+						continue
+					}
+					if len(kb.InlineKeyboard) > 0 {
+						sendMessage(uid, res, kb)
+					} else {
+						sendTo(uid, res)
+					}
 				}
 			}
 			// callback updates
 		} else if u.CallbackData() != "" {
-			logInfo(fmt.Sprintf("[callback] [%s] %s", CFG.Users[uid], u.CallbackData()))
+			logInfo(fmt.Sprintf("[callback] [%s] %s", CFG.Users[uid].Name, u.CallbackData()))
 			msg := u.CallbackQuery.Message
 			action, rawCmd := splitArgs(u.CallbackData())
 			msgText, kb := rawInputHandler(rawCmd)

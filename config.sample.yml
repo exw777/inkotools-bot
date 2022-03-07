@@ -5,9 +5,12 @@ listen_port: "9000"  # internal port app listen on
 report_channel: -100123456789  # channel id for bug reports
 admin: 123456789  # telegram user id for admin
 users:  # map of authorized users
-    987654321: user  # key is user id, value is arbitrary name for convenience
-    654123789: another user  # name can be with spaces
-    123456789: admin  # you can add admin here to access user commands
+    987654321:  # key is user id
+        name: user  # arbitrary name for convenience
+    654123789:
+        name: another user  # name can be with spaces
+    123456789:  # you can add admin here to access user commands
+        name: admin
 inkotools_api_url: http://127.0.0.1:9999/  # url to inkotools api service
 debug: false  # enable debug logging
 ...
