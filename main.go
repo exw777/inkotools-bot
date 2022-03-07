@@ -26,13 +26,14 @@ const CFGFILE string = "config.yml"
 
 // Config struct
 type Config struct {
-	BotToken     string           `yaml:"bot_token"`
-	WebhookURL   string           `yaml:"webhook_url"`
-	ListenPort   string           `yaml:"listen_port"`
-	Admin        int64            `yaml:"admin"`
-	Users        map[int64]string `yaml:"users"`
-	InkoToolsAPI string           `yaml:"inkotools_api_url"`
-	DebugMode    bool             `yaml:"debug"`
+	BotToken      string           `yaml:"bot_token"`
+	WebhookURL    string           `yaml:"webhook_url"`
+	ListenPort    string           `yaml:"listen_port"`
+	ReportChannel int64            `yaml:"report_channel"`
+	Admin         int64            `yaml:"admin"`
+	Users         map[int64]string `yaml:"users"`
+	InkoToolsAPI  string           `yaml:"inkotools_api_url"`
+	DebugMode     bool             `yaml:"debug"`
 }
 
 // CFG - config object
@@ -43,6 +44,9 @@ var TPL *template.Template
 
 // Bot - bot object
 var Bot *tgbotapi.BotAPI
+
+// Mode - message handling mode (default is raw)
+var Mode string = "raw"
 
 // Switch type
 type Switch struct {
@@ -150,7 +154,7 @@ const WARNCHAR string = "\xE2\x80\xBC"
 
 // HELPUSER - help string for user
 const HELPUSER string = `
-<b>Available commands:</b>
+<b>Available commands (raw mode):</b>
 
 Switch commands:
 <code>IP</code> - get switch full summary
@@ -170,6 +174,8 @@ Client commands:
 
 <b>Other commands:</b>
 /help - print this help
+/report - send bug report or improvement suggestions
+/raw - switch to raw command mode (default)
 `
 
 // HELPADMIN - help string for admin
@@ -839,17 +845,36 @@ func main() {
 				if uid == CFG.Admin {
 					cmdAdminHandler(u.Message.CommandArguments())
 				}
+			case "raw":
+				Mode = "raw"
+				sendTo(uid, "You are in raw command mode.")
+			case "report":
+				sendTo(uid, "You are in report mode. Send message with your report. To cancel and return to raw command mode, send /raw.")
+				Mode = "report"
 			default:
-				res, kb := rawInputHandler(u.Message.Text)
-				if res == "" {
-					sendTo(uid, fmtErr("Failed to parse input"))
-					logError(fmt.Sprintf("Failed to parse input, raw: %s", u.Message.Text))
-					continue
-				}
-				if len(kb.InlineKeyboard) > 0 {
-					sendMessage(uid, res, kb)
-				} else {
-					sendTo(uid, res)
+				switch Mode {
+				case "raw":
+					res, kb := rawInputHandler(u.Message.Text)
+					if res == "" {
+						sendTo(uid, fmtErr("Failed to parse input"))
+						logError(fmt.Sprintf("Failed to parse input, raw: %s", u.Message.Text))
+						continue
+					}
+					if len(kb.InlineKeyboard) > 0 {
+						sendMessage(uid, res, kb)
+					} else {
+						sendTo(uid, res)
+					}
+				case "report":
+					fwd := tgbotapi.NewForward(CFG.ReportChannel, uid, u.Message.MessageID)
+					_, err := Bot.Send(fwd)
+					if err != nil {
+						logError(fmt.Sprintf("[report] %v", err))
+						sendTo(uid, "Your report failed. Contact admin to check logs. Now you are in raw command mode.")
+					} else {
+						sendTo(uid, "Your report has been sent. Now you are in raw command mode.")
+					}
+					Mode = "raw"
 				}
 			}
 			// callback updates
