@@ -154,28 +154,30 @@ const WARNCHAR string = "\xE2\x80\xBC"
 
 // HELPUSER - help string for user
 const HELPUSER string = `
-<b>Available commands (raw mode):</b>
+<b>Available commands:</b>
+/help - print this help
+/raw - switch to raw command mode (default)
+/report - switch to feedback mode
 
-Switch commands:
-<code>IP</code> - get switch full summary
-<code>IP PORT</code> - get short switch and short port summary
-<code>IP PORT ARGS</code> - pass additional arguments
+<b>Raw mode (default)</b>
+In this mode bot try to parse raw commands:
+
+<code>IP</code> - depending on <b><i>IP</i></b>, get switch summary or get client ip address summary (ip, mask, gateway, prefix)
+
+<code>IP PORT</code> - get short switch and short port summary with additional callback buttons:
+
+<code>full/short</code> - switch between full and short port summary
+<code>refresh</code> - update information in the same message
+<code>clear</code> - clear port counters and refresh
+<code>repeat</code> - send new message with updated information
 
 <b><i>IP</i></b> can be in short or full format (e.g. <code>59.75</code> and <code>192.168.59.75</code> are equal)
+For client's public ip you must specify address in full format.
 
-Each <b><i>argument</i></b> can be in abbreviated form (e.g. <code>cl</code> and <code>clear</code> are equal)
+<b>Report mode</b>
+In this mode you can send bug reports or suggestions.
+All messages will be redirected to special reports channel. You can also send screenshots or other media.
 
-Supported arguments:
-<code>clear</code> - clear port counters
-<code>full</code> - print additional port information
-
-Client commands:
-<code>IP</code> - get client ip address summary (ip, mask, gateway, prefix)
-
-<b>Other commands:</b>
-/help - print this help
-/report - send bug report or improvement suggestions
-/raw - switch to raw command mode (default)
 `
 
 // HELPADMIN - help string for admin
@@ -849,7 +851,9 @@ func main() {
 				Mode = "raw"
 				sendTo(uid, "You are in raw command mode.")
 			case "report":
-				sendTo(uid, "You are in report mode. Send message with your report. To cancel and return to raw command mode, send /raw.")
+				sendTo(uid, "You are in report mode. "+
+					"Send message with your report, you can also attach screenshots or other media.\n"+
+					"To cancel and return to raw command mode, send /raw.")
 				Mode = "report"
 			default:
 				switch Mode {
@@ -868,13 +872,15 @@ func main() {
 				case "report":
 					fwd := tgbotapi.NewForward(CFG.ReportChannel, uid, u.Message.MessageID)
 					_, err := Bot.Send(fwd)
+					res := ""
 					if err != nil {
 						logError(fmt.Sprintf("[report] %v", err))
-						sendTo(uid, "Your report failed. Contact admin to check logs. Now you are in raw command mode.")
+						res += "Your report failed. Contact admin to check logs. "
 					} else {
-						sendTo(uid, "Your report has been sent. Now you are in raw command mode.")
+						res += "Your report has been sent. "
 					}
-					Mode = "raw"
+					res += "Send another message or return to raw command mode by sending /raw."
+					sendTo(uid, res)
 				}
 			}
 			// callback updates
