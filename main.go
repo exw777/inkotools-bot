@@ -206,12 +206,12 @@ All messages will be redirected to special reports channel. You can also send sc
 
 // HELPADMIN - help string for admin
 const HELPADMIN string = `
-<code>/admin list</code> - list authorized users
-<code>/admin add ID [NAME]</code> - add user with id <b><i>ID</i></b> and optional mark with comment <b><i>NAME</i></b>
-<code>/admin del ID</code> - delete user with id <b><i>ID</i></b>
-<code>/admin send ID TEXT</code> - send message <b><i>TEXT</i></b> to user with id <b><i>ID</i></b>
-<code>/admin broadcast TEXT</code> - send broadcast message <b><i>TEXT</i></b> 
-<code>/admin reload</code> - reload configuration from file
+<code>list</code> - list authorized users
+<code>add ID [NAME]</code> - add user with id <b><i>ID</i></b> and optional mark with comment <b><i>NAME</i></b>
+<code>del ID</code> - delete user with id <b><i>ID</i></b>
+<code>send ID TEXT</code> - send message <b><i>TEXT</i></b> to user with id <b><i>ID</i></b>
+<code>broadcast TEXT</code> - send broadcast message <b><i>TEXT</i></b> 
+<code>reload</code> - reload configuration from file
 `
 
 // HELPER FUNCTIONS
@@ -771,7 +771,7 @@ func cmdAdminHandler(args string) {
 		} else {
 			res = "Config reloaded"
 		}
-	default:
+	case "help":
 		res = HELPADMIN
 	}
 	sendTo(CFG.Admin, res)
@@ -874,7 +874,10 @@ func main() {
 				sendTo(uid, HELPUSER)
 			case "admin":
 				if uid == CFG.Admin {
-					cmdAdminHandler(u.Message.CommandArguments())
+					Mode = "admin"
+					sendTo(uid, "You are in admin mode")
+				} else {
+					sendTo(uid, "You have no permissions to work in this mode")
 				}
 			case "raw":
 				Mode = "raw"
@@ -910,6 +913,8 @@ func main() {
 					}
 					res += "Send another message or return to raw command mode by sending /raw."
 					sendTo(uid, res)
+				case "admin":
+					cmdAdminHandler(u.Message.Text)
 				}
 			}
 			// callback updates
