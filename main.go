@@ -246,8 +246,18 @@ func fmtBytes(bytes uint, toBits bool) string {
 // debug log
 func logDebug(msg string) {
 	if CFG.DebugMode {
-		log.Printf("[DEBUG]%s", msg)
+		log.Printf("[DEBUG] %s", msg)
 	}
+}
+
+// error log
+func logError(msg string) {
+	log.Printf("[ERROR] %s", msg)
+}
+
+// info log
+func logInfo(msg string) {
+	log.Printf("[INFO] %s", msg)
 }
 
 // print timestamp
@@ -265,14 +275,14 @@ func initBot() tgbotapi.UpdatesChannel {
 	if err != nil {
 		log.Panic(err)
 	}
-	Bot.Debug = CFG.DebugMode
-	log.Printf("Authorized on bot account %s", Bot.Self.UserName)
+	// Bot.Debug = CFG.DebugMode
+	logInfo(fmt.Sprintf("[init] Authorized on bot account %s", Bot.Self.UserName))
 
 	whInfo, _ := Bot.GetWebhookInfo()
-	logDebug(fmt.Sprintf("Got webhook info: %v", whInfo.URL))
+	logDebug(fmt.Sprintf("[init] Got webhook info: %v", whInfo.URL))
 	// check webhook is set
 	if whInfo.URL != CFG.WebhookURL+Bot.Token {
-		logDebug(fmt.Sprintf("New webhook: %s", CFG.WebhookURL+Bot.Token))
+		logDebug(fmt.Sprintf("[init] New webhook: %s", CFG.WebhookURL+Bot.Token))
 		wh, _ := tgbotapi.NewWebhook(CFG.WebhookURL + Bot.Token)
 		_, err := Bot.Request(wh)
 		if err != nil {
@@ -282,7 +292,7 @@ func initBot() tgbotapi.UpdatesChannel {
 	// serve http
 	go http.ListenAndServe(":"+CFG.ListenPort, nil)
 	updates := Bot.ListenForWebhook("/" + Bot.Token)
-	log.Printf("Listening on port %s", CFG.ListenPort)
+	logInfo(fmt.Sprintf("[init] Listening on port %s", CFG.ListenPort))
 	return updates
 }
 
@@ -290,15 +300,15 @@ func initBot() tgbotapi.UpdatesChannel {
 func loadConfig() error {
 	data, err := ioutil.ReadFile(CFGFILE)
 	if err != nil {
-		log.Printf("Read config file error: %v", err)
+		logError(fmt.Sprintf("[config] Read file failed: %v", err))
 		return err
 	}
 	err = yaml.Unmarshal(data, &CFG)
 	if err != nil {
-		log.Printf("Parse yaml error: %v", err)
+		logError(fmt.Sprintf("[config] Parse yaml failed: %v", err))
 		return err
 	}
-	log.Printf("Config loaded from %s", CFGFILE)
+	logInfo(fmt.Sprintf("[config] Loaded from %s", CFGFILE))
 	// Template functions
 	funcMap := template.FuncMap{
 		"fmtBytes": fmtBytes,
@@ -306,11 +316,11 @@ func loadConfig() error {
 	// load templates
 	TPL, err = template.New("templates").Funcs(funcMap).ParseGlob("templates/*")
 	if err != nil {
-		log.Printf("Parse templates error: %v", err)
+		logError(fmt.Sprintf("[template] Parse failed: %v", err))
 		return err
 	}
 	for _, t := range TPL.Templates() {
-		logDebug(fmt.Sprintf("Loaded template: %v", t.Name()))
+		logDebug(fmt.Sprintf("[template] Loaded: %v", t.Name()))
 	}
 	return nil
 }
@@ -319,7 +329,7 @@ func loadConfig() error {
 func saveConfig() error {
 	data, err := yaml.Marshal(&CFG)
 	if err != nil {
-		log.Printf("YAML marshal error: %v", err)
+		logError(fmt.Sprintf("[config] YAML marshal failed: %v", err))
 		return err
 	}
 	// attach document start and end strings
@@ -327,10 +337,10 @@ func saveConfig() error {
 	data = append(data, []byte("...\n")...)
 	err = ioutil.WriteFile(CFGFILE, data, 0644)
 	if err != nil {
-		log.Printf("Write config error: %v", err)
+		logError(fmt.Sprintf("[config] Write file failed: %v", err))
 		return err
 	}
-	log.Printf("Config saved to %s", CFGFILE)
+	logInfo(fmt.Sprintf("[config] Saved to %s", CFGFILE))
 	return nil
 }
 
@@ -344,18 +354,19 @@ func manageUser(args string, enabled bool) string {
 	var msgUser, msgAdmin string
 	if enabled && !userIsAuthorized(uid) {
 		CFG.Users[uid] = name
+		logInfo(fmt.Sprintf("[user] %d (%s) added", uid, CFG.Users[uid]))
 		msgUser = "You are added to authorized users list."
 		msgAdmin = fmt.Sprintf("User <code>%d</code> <b>%s</b> added.",
 			uid, CFG.Users[uid])
 	} else if !enabled && userIsAuthorized(uid) {
 		delete(CFG.Users, uid)
+		logInfo(fmt.Sprintf("[user] %d (%s) removed", uid, CFG.Users[uid]))
 		msgUser = "You are removed from authorized users list."
 		msgAdmin = fmt.Sprintf("User <code>%d</code> <b>%s</b> removed.",
 			uid, CFG.Users[uid])
 	} else {
 		return "Nothing to do"
 	}
-	logDebug(msgAdmin)
 	saveConfig()
 	sendTo(uid, msgUser)
 	return msgAdmin
@@ -368,7 +379,7 @@ func sendMessage(id int64, text string, kb tgbotapi.InlineKeyboardMarkup) error 
 	msg.ReplyMarkup = kb
 	_, err := Bot.Send(msg)
 	if err != nil {
-		log.Printf("[ERROR] failed to send message to [%d]: %v", id, err)
+		logError(fmt.Sprintf("[send] [%s] %v, msg: %+v ", CFG.Users[id], err, msg))
 	}
 	return err
 }
@@ -385,7 +396,7 @@ func editMessage(m *tgbotapi.Message, textNew string, kbNew tgbotapi.InlineKeybo
 	msg.ParseMode = tgbotapi.ModeHTML
 	_, err := Bot.Send(msg)
 	if err != nil {
-		log.Printf("[ERROR] failed to edit message: %v", err)
+		logError(fmt.Sprintf("[edit] %v, msg: %+v ", err, msg))
 	}
 	return err
 }
@@ -442,7 +453,7 @@ func broadcastSend(text string) string {
 
 // universal api request
 func requestAPI(method string, endpoint string, args map[string]interface{}) (map[string]interface{}, error) {
-	logDebug(fmt.Sprintf("API %s request endpoint: %s args: %v", method, endpoint, args))
+	logDebug(fmt.Sprintf("[API %s] endpoint: %s, args: %+v", method, endpoint, args))
 	var res map[string]interface{}
 	if endpoint == "" {
 		return res, errors.New("Empty endpoint")
@@ -452,7 +463,7 @@ func requestAPI(method string, endpoint string, args map[string]interface{}) (ma
 	if len(args) > 0 {
 		reqData, err := json.Marshal(args)
 		if err != nil {
-			log.Printf("Pack args to json error: %v", err)
+			logError(fmt.Sprintf("[API %s] Pack args to json failed: %v, args: %+v", method, err, args))
 			return res, errors.New("Packing arguments to json failed")
 		}
 		reqBody = bytes.NewBuffer(reqData)
@@ -469,32 +480,32 @@ func requestAPI(method string, endpoint string, args map[string]interface{}) (ma
 		req, err = http.NewRequest(method, url, reqBody)
 	}
 	if err != nil {
-		log.Printf("Make request error: %v", err)
-		return res, errors.New("Making request failed")
+		logError(fmt.Sprintf("[API %s] Creating request object failed: %v, url: %s, body: %v", method, err, url, reqBody))
+		return res, errors.New("Creating request object failed")
 	}
 	req.Header.Add("Content-Type", "application/json")
 	// send json request to api
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("API request error: %v", err)
+		logError(fmt.Sprintf("[API %s] Request failed: %v, request: %+v", method, err, req))
 		return res, errors.New("API request failed")
 	}
 	defer resp.Body.Close()
 	// parse response
 	err = json.NewDecoder(resp.Body).Decode(&res)
 	if err != nil {
-		log.Printf("Json decode error: %v", err)
+		logError(fmt.Sprintf("[API %s] Response json decode failed: %v, body: %v", method, err, resp.Body))
 		return res, errors.New("API response decode failed")
 	}
 	// if we have no errors from api - return result
 	if resp.StatusCode < 400 {
-		logDebug(fmt.Sprintf("API response: %v", res))
+		logDebug(fmt.Sprintf("[API %s] Response: %+v", method, res))
 		return res, nil
 	}
 	// parse errors from api
 	if res["detail"] != nil {
-		log.Printf("API returned %d error: %v", resp.StatusCode, res["detail"])
+		logError(fmt.Sprintf("[API %s] Returned %d error: %+v, request: %+v", method, resp.StatusCode, res["detail"], req))
 		switch res["detail"].(type) {
 		case string:
 			return res, errors.New(res["detail"].(string))
@@ -502,7 +513,7 @@ func requestAPI(method string, endpoint string, args map[string]interface{}) (ma
 			return res, fmt.Errorf("%d", resp.StatusCode)
 		}
 	}
-	log.Printf("API returned %d error, raw response: %v", resp.StatusCode, res)
+	logError(fmt.Sprintf("[API %s] Returned %d error, raw response: %+v, request: %+v", method, resp.StatusCode, res, req))
 	return res, fmt.Errorf("%d", resp.StatusCode)
 }
 
@@ -661,7 +672,7 @@ func portClear(ip string, port string) string {
 		return fmtErr(err.Error())
 	}
 	if resp["detail"] == nil {
-		log.Printf("[Clear %s %s]API returned no detail, raw data: %v", ip, port, resp)
+		logError(fmt.Sprintf("[clear %s %s] API returned no detail, raw data: %v", ip, port, resp))
 		return fmtErr("Empty response")
 	}
 	return resp["detail"].(string)
@@ -719,6 +730,8 @@ func cmdAdminHandler(args string) {
 	case "reload":
 		err = loadConfig()
 		if err != nil {
+			res = "Failed"
+		} else {
 			res = "Config reloaded"
 		}
 	default:
@@ -761,7 +774,7 @@ func swHandler(ip string, port string, args string) (string, tgbotapi.InlineKeyb
 	}
 	// clear counters if needed
 	if strings.Contains(args, "clear") {
-		logDebug(fmt.Sprintf("Clear result: %s", portClear(ip, port)))
+		logDebug(fmt.Sprintf("[swHandler] Clear result: %s", portClear(ip, port)))
 	}
 	// second part is for backward compatibility (arg f[ull] in raw command)
 	if strings.Contains(args, "full") || args != "" && strings.HasPrefix("full", args) {
@@ -816,7 +829,7 @@ func main() {
 		}
 		// message updates
 		if u.Message != nil {
-			log.Printf("[INFO] [message] [%s] %s", CFG.Users[uid], u.Message.Text)
+			logInfo(fmt.Sprintf("[message] [%s] %s", CFG.Users[uid], u.Message.Text))
 			switch u.Message.Command() {
 			case "help":
 				sendTo(uid, HELPUSER)
@@ -830,7 +843,7 @@ func main() {
 				res, kb := rawInputHandler(u.Message.Text)
 				if res == "" {
 					sendTo(uid, fmtErr("Failed to parse input"))
-					log.Printf("[ERROR]Failed to parse raw: %s", u.Message.Text)
+					logError(fmt.Sprintf("Failed to parse input, raw: %s", u.Message.Text))
 					continue
 				}
 				if len(kb.InlineKeyboard) > 0 {
@@ -841,7 +854,7 @@ func main() {
 			}
 			// callback updates
 		} else if u.CallbackData() != "" {
-			log.Printf("[INFO] [callback] [%s] %s", CFG.Users[uid], u.CallbackData())
+			logInfo(fmt.Sprintf("[callback] [%s] %s", CFG.Users[uid], u.CallbackData()))
 			msg := u.CallbackQuery.Message
 			action, rawCmd := splitArgs(u.CallbackData())
 			msgText, kb := rawInputHandler(rawCmd)
