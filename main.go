@@ -152,6 +152,30 @@ const UPCHAR string = "\xF0\x9F\x86\x99"
 // WARNCHAR - unicode symbol !!
 const WARNCHAR string = "\xE2\x80\xBC"
 
+// ColorReset - ANSI color
+const ColorReset string = "\033[0m"
+
+// ColorRed - ANSI color
+const ColorRed string = "\033[31m"
+
+// ColorGreen - ANSI color
+const ColorGreen string = "\033[32m"
+
+// ColorYellow - ANSI color
+const ColorYellow string = "\033[33m"
+
+// ColorBlue - ANSI color
+const ColorBlue string = "\033[34m"
+
+// ColorPurple - ANSI color
+const ColorPurple string = "\033[35m"
+
+// ColorCyan - ANSI color
+const ColorCyan string = "\033[36m"
+
+// ColorWhite - ANSI color
+const ColorWhite string = "\033[37m"
+
 // HELPUSER - help string for user
 const HELPUSER string = `
 <b>Available commands:</b>
@@ -254,18 +278,23 @@ func fmtBytes(bytes uint, toBits bool) string {
 // debug log
 func logDebug(msg string) {
 	if CFG.DebugMode {
-		log.Printf("[DEBUG] %s", msg)
+		log.Printf("[%sDEBUG%s] %s", ColorCyan, ColorReset, msg)
 	}
-}
-
-// error log
-func logError(msg string) {
-	log.Printf("[ERROR] %s", msg)
 }
 
 // info log
 func logInfo(msg string) {
-	log.Printf("[INFO] %s", msg)
+	log.Printf("[%sINFO%s] %s", ColorGreen, ColorReset, msg)
+}
+
+// warning log
+func logWarning(msg string) {
+	log.Printf("[%sWARNING%s] %s", ColorYellow, ColorReset, msg)
+}
+
+// error log
+func logError(msg string) {
+	log.Printf("[%sERROR%s] %s", ColorRed, ColorReset, msg)
 }
 
 // print timestamp
@@ -823,7 +852,7 @@ func main() {
 	for u := range initBot() {
 		// empty updates if user blocked or restarted bot
 		if u.FromChat() == nil {
-			log.Printf("[WARNING] Empty update")
+			logWarning("Empty update")
 			continue
 		}
 		uid := u.FromChat().ID
