@@ -742,8 +742,8 @@ func newUserHandler(u *tgbotapi.User) {
 }
 
 // admin command handler
-func cmdAdminHandler(args string) {
-	cmd, arg := splitArgs(args)
+func adminHandler(msg string) string {
+	cmd, arg := splitArgs(msg)
 	var res string
 	var err error
 	switch cmd {
@@ -777,16 +777,19 @@ func cmdAdminHandler(args string) {
 	default:
 		res = HELPADMIN
 	}
-	sendTo(CFG.Admin, res)
+	return res
 }
 
 // parse raw input handler
-func rawInputHandler(raw string) (string, tgbotapi.InlineKeyboardMarkup) {
+func rawHandler(raw string) (string, tgbotapi.InlineKeyboardMarkup) {
 	var res string                       // text message result
 	var kb tgbotapi.InlineKeyboardMarkup // inline keyboard markup
 	cmd, args := splitArgs(raw)
 	ip := fullIP(cmd, false)
 	switch {
+	// empty input
+	case raw == "":
+		res = "You are in raw command mode."
 	// cmd is ip address
 	case ip != "":
 		// ip is sw ip
@@ -797,6 +800,9 @@ func rawInputHandler(raw string) (string, tgbotapi.InlineKeyboardMarkup) {
 		} else {
 			res = ipHandler(ip, args)
 		}
+	default:
+		res = fmtErr("Failed to parse raw input.")
+		logError(fmt.Sprintf("[rawHandler] Failed to parse: %s", raw))
 	}
 	return res, kb
 }
@@ -824,12 +830,12 @@ func swHandler(ip string, port string, args string) (string, tgbotapi.InlineKeyb
 	kb = genKeyboard([][]map[string]string{
 		{
 			// inverted view for full/short button calculated as (1 - idx)
-			{view[1-idx]: fmt.Sprintf("refresh %s %s %s", ip, port, view[1-idx])},
+			{view[1-idx]: fmt.Sprintf("raw edit %s %s %s", ip, port, view[1-idx])},
 		},
 		{
-			{"refresh": fmt.Sprintf("refresh %s %s %s", ip, port, view[idx])},
-			{"clear": fmt.Sprintf("refresh %s %s %s clear", ip, port, view[idx])},
-			{"repeat": fmt.Sprintf("repeat %s %s %s", ip, port, view[idx])},
+			{"refresh": fmt.Sprintf("raw edit %s %s %s", ip, port, view[idx])},
+			{"clear": fmt.Sprintf("raw edit %s %s %s clear", ip, port, view[idx])},
+			{"repeat": fmt.Sprintf("raw send %s %s %s", ip, port, view[idx])},
 		},
 	})
 	// for ports switch view is always short
@@ -870,77 +876,112 @@ func main() {
 		// message updates
 		if u.Message != nil {
 			logInfo(fmt.Sprintf("[message] [%s] %s", CFG.Users[uid].Name, u.Message.Text))
-			switch u.Message.Command() {
+			var msg string                       // input message
+			var res string                       // output message
+			var kb tgbotapi.InlineKeyboardMarkup // output keyboard markup
+			cmd := u.Message.Command()
+			cmdArgs := u.Message.CommandArguments()
+			if cmd != "" {
+				msg = cmdArgs
+			} else {
+				msg = u.Message.Text
+			}
+
+			// cmd processing
+			switch cmd {
 			case "help":
-				sendTo(uid, HELPUSER)
+				res = HELPUSER
+				goto SEND
 			case "start":
-				sendTo(uid, HELPUSER)
+				res = HELPUSER
+				goto SEND
 			case "admin":
 				if uid == CFG.Admin {
 					CFG.Users[uid].Mode = "admin"
-					sendTo(uid, "You are in admin mode")
 				} else {
-					sendTo(uid, "You have no permissions to work in this mode")
+					res = fmtErr("You have no permissions to work in this mode.")
+					goto SEND
 				}
 			case "raw":
 				CFG.Users[uid].Mode = "raw"
-				sendTo(uid, "You are in raw command mode.")
 			case "report":
-				sendTo(uid, "You are in report mode. "+
-					"Send message with your report, you can also attach screenshots or other media.\n"+
-					"To cancel and return to raw command mode, send /raw.")
 				CFG.Users[uid].Mode = "report"
+			// no command
+			case "":
+				// skip
+			// wrong command
 			default:
-				switch CFG.Users[uid].Mode {
-				case "admin":
-					cmdAdminHandler(u.Message.Text)
-				case "report":
-					fwd := tgbotapi.NewForward(CFG.ReportChannel, uid, u.Message.MessageID)
-					_, err := Bot.Send(fwd)
-					res := ""
-					if err != nil {
-						logError(fmt.Sprintf("[report] %v", err))
-						res += "Your report failed. Contact admin to check logs. "
-					} else {
-						res += "Your report has been sent. "
-					}
-					res += "Send another message or return to raw command mode by sending /raw."
+				res = fmtErr("Unknown command.")
+				goto SEND
+			}
+
+			// msg processing
+			switch CFG.Users[uid].Mode {
+			case "admin":
+				res = adminHandler(msg)
+			case "report":
+				if msg == "" {
+					res = "You are in report mode. " +
+						"Send message with your report, you can also attach screenshots or other media.\n" +
+						"To cancel and return to raw command mode, send /raw."
+					goto SEND
+				}
+				fwd := tgbotapi.NewForward(CFG.ReportChannel, uid, u.Message.MessageID)
+				_, err := Bot.Send(fwd)
+				if err != nil {
+					logError(fmt.Sprintf("[report] %v", err))
+					res += "Your report failed. Contact admin to check logs. "
+				} else {
+					res += "Your report has been sent. "
+				}
+				res += "Send another message or return to raw command mode by sending /raw."
+			default: // default is raw mode
+				res, kb = rawHandler(msg)
+			}
+		SEND:
+			if res != "" {
+				if len(kb.InlineKeyboard) > 0 {
+					sendMessage(uid, res, kb)
+				} else {
 					sendTo(uid, res)
-				default: // raw mode
-					res, kb := rawInputHandler(u.Message.Text)
-					if res == "" {
-						sendTo(uid, fmtErr("Failed to parse input"))
-						logError(fmt.Sprintf("Failed to parse input, raw: %s", u.Message.Text))
-						continue
-					}
-					if len(kb.InlineKeyboard) > 0 {
-						sendMessage(uid, res, kb)
-					} else {
-						sendTo(uid, res)
-					}
 				}
 			}
 			// callback updates
 		} else if u.CallbackData() != "" {
 			logInfo(fmt.Sprintf("[callback] [%s] %s", CFG.Users[uid].Name, u.CallbackData()))
 			msg := u.CallbackQuery.Message
-			action, rawCmd := splitArgs(u.CallbackData())
-			msgText, kb := rawInputHandler(rawCmd)
+			var res string                       // output message
+			var kb tgbotapi.InlineKeyboardMarkup // output keyboard markup
+			mode, args := splitArgs(u.CallbackData())
+			action, rawCmd := splitArgs(args)
+
+			switch mode {
+			case "raw":
+				res, kb = rawHandler(rawCmd)
+			default:
+				logWarning(fmt.Sprintf("[callback] wrong mode: %s", mode))
+				goto CALLBACK
+			}
+			// restore mode if it was changed by another command
+			CFG.Users[uid].Mode = mode
 
 			switch action {
-			case "repeat":
+			case "send":
 				if len(kb.InlineKeyboard) > 0 {
-					sendMessage(uid, msgText, kb)
+					sendMessage(uid, res, kb)
 				} else {
-					sendTo(uid, msgText)
+					sendTo(uid, res)
 				}
-			case "refresh":
+			case "edit":
 				if len(kb.InlineKeyboard) > 0 {
-					editTextAndKeyboard(msg, msgText, kb)
+					editTextAndKeyboard(msg, res, kb)
 				} else {
-					editText(msg, msgText)
+					editText(msg, res)
 				}
+			default:
+				logWarning(fmt.Sprintf("[callback] wrong action: %s", action))
 			}
+		CALLBACK:
 			Bot.Request(tgbotapi.NewCallback(u.CallbackQuery.ID, "Done"))
 		}
 	}
