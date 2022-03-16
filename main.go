@@ -137,6 +137,22 @@ type ARPEntry struct {
 	State  bool   `mapstructure:"state"`
 }
 
+// DBSearch type
+type DBSearch struct {
+	Data []Switch `mapstructure:"data"`
+	Meta struct {
+		Entries struct {
+			Current int `mapstructure:"current"`
+			PerPage int `mapstructure:"per_page"`
+			Total   int `mapstructure:"total"`
+		} `mapstructure:"entries"`
+		Pages struct {
+			Current int `mapstructure:"current"`
+			Total   int `mapstructure:"total"`
+		} `mapstructure:"pages"`
+	} `mapstructure:"meta"`
+}
+
 // XCHAR - unicode symbol X
 const XCHAR string = "\xE2\x9D\x8C"
 
@@ -205,6 +221,9 @@ For client's public ip you must specify address in full format.
 In this mode you can send bug reports or suggestions.
 All messages will be redirected to special reports channel. You can also send screenshots or other media.
 
+<b>Search mode</b>
+In this mode you cah search switches by mac, model or location.
+
 `
 
 // HELPADMIN - help string for admin
@@ -232,6 +251,12 @@ func splitArgs(args string) (first string, other string) {
 		return a[0], ""
 	}
 	return a[0], strings.TrimSpace(a[1])
+}
+
+// split last arg from args
+func splitLast(args string) (before string, last string) {
+	i := strings.LastIndex(args, " ")
+	return args[:i], args[i+1:]
 }
 
 // convert x.x --> 192.168.x.x, return empty string on invalid ip
@@ -854,6 +879,51 @@ func ipHandler(ip string, args string) string {
 	return ipCalc(ip)
 }
 
+// search mode handler
+func searchHandler(kw string, page int) (string, tgbotapi.InlineKeyboardMarkup) {
+	var res string                       // text message result
+	var kb tgbotapi.InlineKeyboardMarkup // inline keyboard markup
+	if kw == "" {
+		res = "You are in search mode"
+		return res, kb
+	}
+	resp, err := requestAPI("POST", "/db/search", map[string]interface{}{"keyword": kw, "page": page, "per_page": 4})
+	if err != nil {
+		res = fmtErr(err.Error())
+	} else {
+		var result DBSearch
+		err = mapstructure.Decode(resp, &result)
+		if err != nil {
+			logError(fmt.Sprintf("[search] %v", err))
+		} else {
+			res = fmtObj(result, "search.tmpl")
+			// callback pagination
+			if result.Meta.Pages.Total > 1 {
+				// make empty buttons row
+				buttons := [][]map[string]string{{}}
+				if page > 1 {
+					if page > 2 {
+						// first page
+						buttons[0] = append(buttons[0], map[string]string{"<<": fmt.Sprintf("search edit %s %d", kw, 1)})
+					}
+					// previous page
+					buttons[0] = append(buttons[0], map[string]string{"<": fmt.Sprintf("search edit %s %d", kw, page-1)})
+				}
+				if page < result.Meta.Pages.Total {
+					// next page
+					buttons[0] = append(buttons[0], map[string]string{">": fmt.Sprintf("search edit %s %d", kw, page+1)})
+					if page < result.Meta.Pages.Total-1 {
+						// last page
+						buttons[0] = append(buttons[0], map[string]string{">>": fmt.Sprintf("search edit %s %d", kw, result.Meta.Pages.Total)})
+					}
+				}
+				kb = genKeyboard(buttons)
+			}
+		}
+	}
+	return res, kb
+}
+
 // MAIN APP
 func main() {
 	loadConfig()
@@ -906,6 +976,8 @@ func main() {
 				CFG.Users[uid].Mode = "raw"
 			case "report":
 				CFG.Users[uid].Mode = "report"
+			case "search":
+				CFG.Users[uid].Mode = "search"
 			// no command
 			case "":
 				// skip
@@ -935,6 +1007,9 @@ func main() {
 					res += "Your report has been sent. "
 				}
 				res += "Send another message or return to raw command mode by sending /raw."
+			case "search":
+				// search and go to the first page
+				res, kb = searchHandler(msg, 1)
 			default: // default is raw mode
 				res, kb = rawHandler(msg)
 			}
@@ -958,6 +1033,11 @@ func main() {
 			switch mode {
 			case "raw":
 				res, kb = rawHandler(rawCmd)
+			case "search":
+				// cut last argument - page number and convert to int
+				kw, p := splitLast(rawCmd)
+				page, _ := strconv.Atoi(p)
+				res, kb = searchHandler(kw, page)
 			default:
 				logWarning(fmt.Sprintf("[callback] wrong mode: %s", mode))
 				goto CALLBACK

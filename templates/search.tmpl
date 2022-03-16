@@ -1,0 +1,10 @@
+Entries found: <b>{{ .Meta.Entries.Total }}</b>
+{{ range .Data }}
+ip: <code>{{ .IP }}</code>
+mac: <code>{{ .MAC }}</code>
+model: <code>{{ .Model }}</code>
+location: <code>{{ .Location }}</code>
+{{ end }}
+{{- if gt .Meta.Pages.Total 1 }}
+Page: <b>{{ .Meta.Pages.Current }}/{{ .Meta.Pages.Total }}</b> ({{ .Meta.Entries.PerPage }} entries per page)
+{{- end }}
