@@ -462,8 +462,8 @@ func manageUser(args string, enabled bool) string {
 	return msgAdmin
 }
 
-// send text message with inline keyboard to user
-func sendMessage(id int64, text string, kb tgbotapi.InlineKeyboardMarkup) error {
+// send text message with keyboard (both reply or inline) to user
+func sendMessage(id int64, text string, kb interface{}) error {
 	msg := tgbotapi.NewMessage(id, text)
 	msg.ParseMode = tgbotapi.ModeHTML
 	msg.ReplyMarkup = kb
@@ -963,8 +963,11 @@ func pingerStart(uid int64, host string) error {
 	}
 	// start message
 	p.OnSetup = func() {
-		sendTo(uid, fmt.Sprintf("<pre>PING %s (%v) %d (%d) bytes of data.</pre>",
-			p.Addr(), p.IPAddr(), p.Size, p.Size+28))
+		// add static keyboard with stop button
+		kb := tgbotapi.NewReplyKeyboard(tgbotapi.NewKeyboardButtonRow(tgbotapi.NewKeyboardButton("stop")))
+		res := fmt.Sprintf("<pre>PING %s (%v) %d (%d) bytes of data.</pre>",
+			p.Addr(), p.IPAddr(), p.Size, p.Size+28)
+		sendMessage(uid, res, kb)
 	}
 	// send ping result for each packet
 	p.OnRecv = func(pkt *ping.Packet) {
@@ -977,12 +980,19 @@ func pingerStart(uid int64, host string) error {
 	}
 	// send total statistics when stopped
 	p.OnFinish = func(stats *ping.Statistics) {
-		sendTo(uid, fmt.Sprintf("<pre>%s (%s) stats:\n"+
+		res := fmt.Sprintf("<pre>%s (%s) stats:\n"+
 			"%d sent, %d received, %v%% loss\n"+
 			"rtt min/avg/max/stddev:\n%v/%v/%v/%v</pre>",
 			stats.Addr, stats.IPAddr,
 			stats.PacketsSent, stats.PacketsRecv, stats.PacketLoss,
-			fmtRTT(stats.MinRtt), fmtRTT(stats.AvgRtt), fmtRTT(stats.MaxRtt), fmtRTT(stats.StdDevRtt)))
+			fmtRTT(stats.MinRtt), fmtRTT(stats.AvgRtt), fmtRTT(stats.MaxRtt), fmtRTT(stats.StdDevRtt))
+		// remove keyboard only if no new pinger is running
+		if _, exist := Pingers[uid]; exist {
+			sendTo(uid, res)
+		} else {
+			kb := tgbotapi.NewRemoveKeyboard(true)
+			sendMessage(uid, res, kb)
+		}
 	}
 	// add pinger to global list
 	Pingers[uid] = *p
