@@ -15,6 +15,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/go-ping/ping"
 	"github.com/mitchellh/mapstructure"
 	"gopkg.in/yaml.v3"
 
@@ -50,6 +51,9 @@ var TPL *template.Template
 
 // Bot - bot object
 var Bot *tgbotapi.BotAPI
+
+// Pingers - map of active pingers, key is uid
+var Pingers map[int64]ping.Pinger
 
 // Switch type
 type Switch struct {
@@ -199,8 +203,12 @@ const ColorWhite string = "\033[37m"
 const HELPUSER string = `
 <b>Available commands:</b>
 /help - print this help
-/raw - switch to raw command mode (default)
-/report - switch to feedback mode
+/raw [args] - switch to raw command mode (default)
+/report [args] - switch to feedback mode
+/search [args] - switch to search mode
+/ping [args] - switch to ping mode
+
+<code>args</code> - optional commands, which can be executed immediately, like you are already in this mode.
 
 <b>Raw mode (default)</b>
 In this mode bot try to parse raw commands:
@@ -222,7 +230,12 @@ In this mode you can send bug reports or suggestions.
 All messages will be redirected to special reports channel. You can also send screenshots or other media.
 
 <b>Search mode</b>
-In this mode you cah search switches by mac, model or location.
+In this mode you can search switches by mac, model or location.
+Results will be paginated. Use callback buttons to navigate between pages: first, previous, next, last. 
+
+<b>Ping mode</b>
+In this mode you can ping different hosts.
+Only one host at time. If you send a new host, previous pinger will be stopped.
 
 `
 
@@ -303,6 +316,16 @@ func fmtBytes(bytes uint, toBits bool) string {
 	return fmt.Sprintf("%.2f %s", res, units[i])
 }
 
+// print rounded duration if it is less than 100s.
+func fmtRTT(d time.Duration) string {
+	scale := 100 * time.Second
+	// look for the max scale that is smaller than d
+	for scale > d {
+		scale = scale / 10
+	}
+	return d.Round(scale / 100).String()
+}
+
 // debug log
 func logDebug(msg string) {
 	if CFG.DebugMode {
@@ -354,6 +377,8 @@ func initBot() tgbotapi.UpdatesChannel {
 			log.Panic(err)
 		}
 	}
+	// init pingers
+	Pingers = make(map[int64]ping.Pinger)
 	// serve http
 	go http.ListenAndServe(":"+CFG.ListenPort, nil)
 	updates := Bot.ListenForWebhook("/" + Bot.Token)
@@ -924,6 +949,82 @@ func searchHandler(kw string, page int) (string, tgbotapi.InlineKeyboardMarkup) 
 	return res, kb
 }
 
+// start user pinger
+func pingerStart(uid int64, host string) error {
+	// one user can ping one host at time
+	if _, exist := Pingers[uid]; exist {
+		pingerStop(uid)
+	}
+	logDebug(fmt.Sprintf("[ping] [%s] starting %s", CFG.Users[uid].Name, host))
+	p, err := ping.NewPinger(host)
+	if err != nil {
+		logError(fmt.Sprintf("[ping] [%s] [%s] %v", CFG.Users[uid].Name, host, err))
+		return err
+	}
+	// start message
+	p.OnSetup = func() {
+		sendTo(uid, fmt.Sprintf("<pre>PING %s (%v) %d (%d) bytes of data.</pre>",
+			p.Addr(), p.IPAddr(), p.Size, p.Size+28))
+	}
+	// send ping result for each packet
+	p.OnRecv = func(pkt *ping.Packet) {
+		sendTo(uid, fmt.Sprintf("<pre>%d bytes from %v: icmp_seq=%d time=%v</pre>",
+			pkt.Nbytes, pkt.IPAddr, pkt.Seq, fmtRTT(pkt.Rtt)))
+	}
+	p.OnDuplicateRecv = func(pkt *ping.Packet) {
+		sendTo(uid, fmt.Sprintf("<pre>%d bytes from %v: icmp_seq=%d time=%v (DUP!)</pre>",
+			pkt.Nbytes, pkt.IPAddr, pkt.Seq, fmtRTT(pkt.Rtt)))
+	}
+	// send total statistics when stopped
+	p.OnFinish = func(stats *ping.Statistics) {
+		sendTo(uid, fmt.Sprintf("<pre>%s (%s) stats:\n"+
+			"%d sent, %d received, %v%% loss\n"+
+			"rtt min/avg/max/stddev:\n%v/%v/%v/%v</pre>",
+			stats.Addr, stats.IPAddr,
+			stats.PacketsSent, stats.PacketsRecv, stats.PacketLoss,
+			fmtRTT(stats.MinRtt), fmtRTT(stats.AvgRtt), fmtRTT(stats.MaxRtt), fmtRTT(stats.StdDevRtt)))
+	}
+	// add pinger to global list
+	Pingers[uid] = *p
+	// run ping in goroutine
+	go p.Run()
+	return err
+}
+
+// stop user pinger
+func pingerStop(uid int64) {
+	// check if pinger exists and stop it
+	if _, exist := Pingers[uid]; exist {
+		p := Pingers[uid]
+		logDebug(fmt.Sprintf("[ping] [%s] stopping %s", CFG.Users[uid].Name, p.Addr()))
+		p.Stop()
+		// remove pinger from global list
+		delete(Pingers, uid)
+	}
+}
+
+// ping mode handler
+func pingHandler(msg string, uid int64) string {
+	var res string // text message result
+	switch msg {
+	case "":
+		res = "You are in ping mode. Send <b>host</b> to start pinging. Send <code>stop</code> to stop pinging."
+	case "stop":
+		pingerStop(uid)
+	default:
+		if fullIP(msg, true) != "" {
+			return fmtErr("Impossible to ping switch ip without violating network conception. Use /raw mode for availability checks.")
+		} else if ip := fullIP(msg, false); ip != "" {
+			msg = ip
+		}
+		err := pingerStart(uid, msg)
+		if err != nil {
+			res = fmtErr(err.Error())
+		}
+	}
+	return res
+}
+
 // MAIN APP
 func main() {
 	loadConfig()
@@ -978,6 +1079,8 @@ func main() {
 				CFG.Users[uid].Mode = "report"
 			case "search":
 				CFG.Users[uid].Mode = "search"
+			case "ping":
+				CFG.Users[uid].Mode = "ping"
 			// no command
 			case "":
 				// skip
@@ -1010,6 +1113,9 @@ func main() {
 			case "search":
 				// search and go to the first page
 				res, kb = searchHandler(msg, 1)
+			case "ping":
+				// res, kb = pingHandler(msg)
+				res = pingHandler(msg, uid)
 			default: // default is raw mode
 				res, kb = rawHandler(msg)
 			}
