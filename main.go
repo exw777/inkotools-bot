@@ -257,6 +257,13 @@ func userIsAuthorized(id int64) bool {
 	return ok
 }
 
+// search int in list of int
+func intInList(val int, lst []int) bool {
+	sort.Ints(lst)
+	idx := sort.SearchInts(lst, val)
+	return !((idx == len(lst)) || (val != lst[idx]))
+}
+
 // split first arg from args
 func splitArgs(args string) (first string, other string) {
 	a := strings.SplitN(args, " ", 2)
@@ -673,6 +680,8 @@ func portSummary(ip string, port string, style string) string {
 		var arpTable []ARPEntry
 		var arpTmp []ARPEntry
 		var accessPorts []int
+		var mcastMemberPorts []int
+		var mcastSourcePorts []int
 		// get vlan
 		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/vlan", ip, port))
 		if err == nil {
@@ -684,7 +693,7 @@ func portSummary(ip string, port string, style string) string {
 		if err == nil {
 			mapstructure.Decode(resp["data"].(map[string]interface{})["access_ports"], &accessPorts)
 		}
-		if sort.SearchInts(accessPorts, ports[0].Port) == len(accessPorts) {
+		if !intInList(ports[0].Port, accessPorts) {
 			goto END
 		}
 		// get acl
@@ -692,6 +701,22 @@ func portSummary(ip string, port string, style string) string {
 		if err == nil {
 			mapstructure.Decode(resp["data"], &acl)
 			res += fmtObj(acl, "acl.tmpl")
+		}
+		// get multicast ports
+		resp, err = apiGet(fmt.Sprintf("/sw/%s/multicast", ip))
+		if err == nil {
+			mapstructure.Decode(resp["data"].(map[string]interface{})["member"], &mcastMemberPorts)
+			mapstructure.Decode(resp["data"].(map[string]interface{})["source"], &mcastSourcePorts)
+			if len(mcastSourcePorts) == 0 {
+				res += "\n<b>No multicast source ports</b>" + WARNCHAR + "\n"
+			}
+			res += "\n<i>Multicast: </i><code>"
+			if intInList(ports[0].Port, mcastMemberPorts) {
+				res += "enabled"
+			} else {
+				res += "disabled"
+			}
+			res += "</code>\n"
 		}
 		// get mac table only if link is up
 		if !linkUp {
