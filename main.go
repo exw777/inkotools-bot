@@ -85,6 +85,12 @@ type Pair struct {
 	Len   int    `mapstructure:"len"`
 }
 
+// PortBandwidth limits type
+type PortBandwidth struct {
+	RX uint `mapstructure:"rx"`
+	TX uint `mapstructure:"tx"`
+}
+
 // PortCounters type
 type PortCounters struct {
 	TotalRX  uint        `mapstructure:"rx_total"`
@@ -409,6 +415,7 @@ func loadConfig() error {
 	// Template functions
 	funcMap := template.FuncMap{
 		"fmtBytes": fmtBytes,
+		"fmtKbits": func(x uint) string { return fmtBytes(x*125, true) },
 	}
 	// load templates
 	TPL, err = template.New("templates").Funcs(funcMap).ParseGlob("templates/*")
@@ -653,6 +660,7 @@ func portSummary(ip string, port string, style string) string {
 	var ports []Port
 	var linkUp bool
 	var counters PortCounters
+	var bandwidth PortBandwidth
 	resp, err := apiGet(fmt.Sprintf("/sw/%s/ports/%s/", ip, port))
 	if err != nil {
 		return fmtErr(err.Error())
@@ -667,7 +675,13 @@ func portSummary(ip string, port string, style string) string {
 			break
 		}
 	}
-	//get port counters
+	// get port bandwidth
+	resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/bandwidth", ip, port))
+	if err == nil {
+		mapstructure.Decode(resp["data"], &bandwidth)
+		res += fmtObj(bandwidth, "bandwidth.tmpl")
+	}
+	// get port counters
 	resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/counters", ip, port))
 	if err == nil {
 		mapstructure.Decode(resp["data"], &counters)
