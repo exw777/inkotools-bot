@@ -1,0 +1,17 @@
+{{- $warning := "\xE2\x9A\xA0" }}
+{{- if not .SourcePorts }}
+{{ $warning }}<b>No multicast source ports!</b>
+{{- end }}
+<i>Multicast: </i><code>{{ fmtState .State}}</code>
+{{- if .State }}
+<i>Filters: </i>
+{{- if not .Filters }}<code>no limits</code>{{ end }}
+{{- range .Filters }}
+<code>{{ . }}</code>
+{{- end }}
+<i>Groups: </i>
+{{- if not .Groups }}<code>empty</code>{{ end }}
+{{- range .Groups }}
+<code>{{ . }}</code>
+{{- end }}
+{{- end }}

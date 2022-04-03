@@ -131,6 +131,16 @@ type PortACL struct {
 	Mode      string `mapstructure:"mode"`
 }
 
+// PortMulticast type
+type PortMulticast struct {
+	Port        int
+	SourcePorts []int `mapstructure:"source"`
+	MemberPorts []int `mapstructure:"member"`
+	State       bool
+	Groups      []string
+	Filters     []string
+}
+
 // IPCalc type
 type IPCalc struct {
 	IP      string `mapstructure:"ip"`
@@ -416,6 +426,12 @@ func loadConfig() error {
 	funcMap := template.FuncMap{
 		"fmtBytes": fmtBytes,
 		"fmtKbits": func(x uint) string { return fmtBytes(x*125, true) },
+		"fmtState": func(b bool) string {
+			if b {
+				return "enabled"
+			}
+			return "disabled"
+		},
 	}
 	// load templates
 	TPL, err = template.New("templates").Funcs(funcMap).ParseGlob("templates/*")
@@ -694,8 +710,7 @@ func portSummary(ip string, port string, style string) string {
 		var arpTable []ARPEntry
 		var arpTmp []ARPEntry
 		var accessPorts []int
-		var mcastMemberPorts []int
-		var mcastSourcePorts []int
+		var mcast PortMulticast
 		// get vlan
 		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/vlan", ip, port))
 		if err == nil {
@@ -716,22 +731,29 @@ func portSummary(ip string, port string, style string) string {
 			mapstructure.Decode(resp["data"], &acl)
 			res += fmtObj(acl, "acl.tmpl")
 		}
-		// get multicast ports
+		// get multicast data
+		mcast.Port = ports[0].Port
+		// source and member ports
 		resp, err = apiGet(fmt.Sprintf("/sw/%s/multicast", ip))
 		if err == nil {
-			mapstructure.Decode(resp["data"].(map[string]interface{})["member"], &mcastMemberPorts)
-			mapstructure.Decode(resp["data"].(map[string]interface{})["source"], &mcastSourcePorts)
-			if len(mcastSourcePorts) == 0 {
-				res += "\n<b>No multicast source ports</b>" + WARNCHAR + "\n"
-			}
-			res += "\n<i>Multicast: </i><code>"
-			if intInList(ports[0].Port, mcastMemberPorts) {
-				res += "enabled"
-			} else {
-				res += "disabled"
-			}
-			res += "</code>\n"
+			mapstructure.Decode(resp["data"], &mcast)
+			mcast.State = intInList(mcast.Port, mcast.MemberPorts)
 		}
+		if mcast.State {
+			// mcast filters
+			resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/mcast/filters", ip, port))
+			if err == nil {
+				mapstructure.Decode(resp["data"], &mcast.Filters)
+			}
+			if linkUp {
+				// mcast groups
+				resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/mcast/groups", ip, port))
+				if err == nil {
+					mapstructure.Decode(resp["data"], &mcast.Groups)
+				}
+			}
+		}
+		res += fmtObj(mcast, "mcast.tmpl")
 		// get mac table only if link is up
 		if !linkUp {
 			goto END
