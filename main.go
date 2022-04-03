@@ -738,22 +738,22 @@ func portSummary(ip string, port string, style string) string {
 		if err == nil {
 			mapstructure.Decode(resp["data"], &mcast)
 			mcast.State = intInList(mcast.Port, mcast.MemberPorts)
-		}
-		if mcast.State {
-			// mcast filters
-			resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/mcast/filters", ip, port))
-			if err == nil {
-				mapstructure.Decode(resp["data"], &mcast.Filters)
-			}
-			if linkUp {
-				// mcast groups
-				resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/mcast/groups", ip, port))
+			if mcast.State {
+				// mcast filters
+				resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/mcast/filters", ip, port))
 				if err == nil {
-					mapstructure.Decode(resp["data"], &mcast.Groups)
+					mapstructure.Decode(resp["data"], &mcast.Filters)
+				}
+				if linkUp {
+					// mcast groups
+					resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/mcast/groups", ip, port))
+					if err == nil {
+						mapstructure.Decode(resp["data"], &mcast.Groups)
+					}
 				}
 			}
+			res += fmtObj(mcast, "mcast.tmpl")
 		}
-		res += fmtObj(mcast, "mcast.tmpl")
 		// get mac table only if link is up
 		if !linkUp {
 			goto END
