@@ -173,6 +173,52 @@ type DBSearch struct {
 	} `mapstructure:"meta"`
 }
 
+// Contract type
+type Contract struct {
+	ContractID string   `mapstructure:"contract_id"`
+	ClientID   uint     `mapstructure:"client_id"`
+	Terminated bool     `mapstructure:"terminated"`
+	Name       string   `mapstructure:"name"`
+	Contacts   []string `mapstructure:"contact_list"`
+	Street     string   `mapstructure:"street"`
+	House      string   `mapstructure:"house"`
+	Room       string   `mapstructure:"room"`
+	Company    string   `mapstructure:"company"`
+	Office     string   `mapstructure:"office"`
+	SwitchIP   string   `mapstructure:"sw_ip"`
+	Port       string   `mapstructure:"port"`
+	Cable      string   `mapstructure:"cable_length"`
+	Comment    string   `mapstructure:"comment"`
+	Billing    struct {
+		Inet  InetAccount    `mapstructure:"internet"`
+		Tel   TelAccount     `mapstructure:"telephony"`
+		LDTel TelAccount     `mapstructure:"ld_telephony"`
+		TV    BillingAccount `mapstructure:"television"`
+	} `mapstructure:"billing_accounts"`
+}
+
+// BillingAccount type
+type BillingAccount struct {
+	ID       int      `mapstructure:"account_id"`
+	Services []string `mapstructure:"services"`
+	Balance  float32  `mapstructure:"balance"`
+	Credit   float32  `mapstructure:"credit"`
+	Enabled  bool     `mapstructure:"enabled"`
+}
+
+// InetAccount type
+type InetAccount struct {
+	BillingAccount `mapstructure:",squash"`
+	Tariff         string   `mapstructure:"tariff"`
+	IPs            []string `mapstructure:"ip_list"`
+}
+
+// TelAccount type
+type TelAccount struct {
+	BillingAccount `mapstructure:",squash"`
+	Numbers        []string `mapstructure:"number_list"`
+}
+
 // XCHAR - unicode symbol X
 const XCHAR string = "\xE2\x9D\x8C"
 
@@ -229,9 +275,11 @@ const HELPUSER string = `
 <b>Raw mode (default)</b>
 In this mode bot try to parse raw commands:
 
-<code>IP</code> - depending on <b><i>IP</i></b>, get switch summary or get client ip address summary (ip, mask, gateway, prefix)
+<code>{CLIENT_IP|CONTRACT_ID}</code> - get client summary from gray database
 
-<code>IP PORT</code> - get short switch and short port summary with additional callback buttons:
+<code>SW_IP</code> - get switch summary
+
+<code>SW_IP PORT</code> - get short switch and short port summary with additional callback buttons:
 
 <code>full/short</code> - switch between full and short port summary
 <code>refresh</code> - update information in the same message
@@ -252,6 +300,9 @@ Results will be paginated. Use callback buttons to navigate between pages: first
 <b>Ping mode</b>
 In this mode you can ping different hosts.
 Only one host at time. If you send a new host, previous pinger will be stopped.
+
+<b>IP calc mode</b>
+In this mode you can get client ip address summary (ip, mask, gateway, prefix)
 
 `
 
@@ -308,6 +359,12 @@ func fullIP(ip string, isSwitch bool) string {
 		return ip
 	}
 	return ""
+}
+
+// check if string is contract id
+func isContract(s string) bool {
+	rgx, _ := regexp.Compile(`^[0-9]{5}$`)
+	return rgx.MatchString(s)
 }
 
 // print error in message
@@ -909,8 +966,11 @@ func rawHandler(raw string) (string, tgbotapi.InlineKeyboardMarkup) {
 			res, kb = swHandler(ip, port, args)
 			// ip is client ip
 		} else {
-			res = ipHandler(ip, args)
+			res, kb = clientHandler(ip, args)
 		}
+	// cmd is contract id
+	case isContract(cmd):
+		res, kb = clientHandler(cmd, args)
 	default:
 		res = fmtErr("Failed to parse raw input.")
 		logError(fmt.Sprintf("[rawHandler] Failed to parse: %s", raw))
@@ -959,10 +1019,59 @@ RETURN:
 	return res, kb
 }
 
-// client ip handler
-func ipHandler(ip string, args string) string {
-	// dummy calculator
-	return ipCalc(ip)
+// ip calc handler
+func calcHandler(arg string) string {
+	var res string
+	ip := fullIP(arg, false)
+	if ip == "" {
+		res = "You are in ip calculator mode. Send valid ip address or /raw to return."
+	} else {
+		res = ipCalc(ip)
+	}
+	return res
+}
+
+// client ip / contract id handler
+func clientHandler(cl string, args string) (string, tgbotapi.InlineKeyboardMarkup) {
+	var res string                       // text message result
+	var kb tgbotapi.InlineKeyboardMarkup // inline keyboard markup
+	var kbBtn string                     // full/short style switch button text
+	var cData Contract                   // client data struct
+	var endpoint string
+	var template string
+	logDebug(fmt.Sprintf("[clientHandler] cl: %s, args: %s", cl, args))
+	// cl is contract id or client ip address
+	if isContract(cl) {
+		endpoint = fmt.Sprintf("/gdb/%s/", cl)
+	} else {
+		endpoint = fmt.Sprintf("/gdb/by-ip/%s/", cl)
+	}
+	// set full/short template and set keyboard button text
+	switch args {
+	case "full":
+		template = "contract.tmpl"
+		kbBtn = "short"
+	default:
+		template = "contract.short.tmpl"
+		kbBtn = "full"
+	}
+	resp, err := apiGet(endpoint)
+	if err != nil {
+		res = fmtErr(err.Error())
+	} else {
+		mapstructure.Decode(resp["data"], &cData)
+		res = fmtObj(cData, template)
+		gdbURL := fmt.Sprintf("https://graydb.inko.tools/index.php?id_aabon=%d", cData.ClientID)
+		kb = tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData(kbBtn, fmt.Sprintf("raw edit %s %s", cl, kbBtn)),
+			),
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonURL("open in gray database", gdbURL),
+			),
+		)
+	}
+	return res, kb
 }
 
 // search mode handler
@@ -1144,15 +1253,9 @@ func main() {
 					res = fmtErr("You have no permissions to work in this mode.")
 					goto SEND
 				}
-			case "raw":
-				CFG.Users[uid].Mode = "raw"
-			case "report":
-				CFG.Users[uid].Mode = "report"
-			case "search":
-				CFG.Users[uid].Mode = "search"
-			case "ping":
-				CFG.Users[uid].Mode = "ping"
-			// no command
+			case "raw", "report", "search", "ping", "calc":
+				CFG.Users[uid].Mode = cmd
+				// no command
 			case "":
 				// skip
 			// wrong command
@@ -1185,8 +1288,9 @@ func main() {
 				// search and go to the first page
 				res, kb = searchHandler(msg, 1)
 			case "ping":
-				// res, kb = pingHandler(msg)
 				res = pingHandler(msg, uid)
+			case "calc":
+				res = calcHandler(msg)
 			default: // default is raw mode
 				res, kb = rawHandler(msg)
 			}

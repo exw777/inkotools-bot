@@ -1,0 +1,26 @@
+{{- $warning := "\xE2\x9A\xA0" }}
+{{- $TEL := "\xF0\x9F\x93\x9E" }}
+{{- $HOUSE := "\xF0\x9F\x8F\xA0" }}
+{{- $OFFICE := "\xF0\x9F\x8F\xA2" }}
+[<code>{{ .ContractID }}</code>]{{ if .Terminated }}{{ $warning }}[TERMINATED]{{ end }}
+{{- if .Name }}
+<b>{{ .Name }}</b>
+{{- end }}
+{{- if .Company }}
+<i>{{ .Company }}</i>
+{{- end }}
+{{- range .Contacts }}
+{{ $TEL }} <code>{{ . }}</code>
+{{- end }}
+{{- if .Street }}
+{{ $HOUSE }} <code>{{ .Street }} {{ .House }}{{ if .Room }} - {{ .Room }}{{ end }}</code>
+{{- end }}
+{{- if .Office }}
+{{ $OFFICE }} <code>{{ .Office }}</code>
+{{- end }}
+{{- if .SwitchIP }}
+<i>Switch: </i><code>{{ .SwitchIP }} {{ .Port }}</code>
+{{- end }}
+{{- if .Cable }}
+<i>Cable: </i><code>{{ .Cable }}</code>
+{{- end }}
