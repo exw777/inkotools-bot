@@ -551,30 +551,37 @@ func manageUser(args string, enabled bool) string {
 }
 
 // send text message with keyboard (both reply or inline) to user
-func sendMessage(id int64, text string, kb interface{}) error {
+func sendMessage(id int64, text string, kb interface{}) (tgbotapi.Message, error) {
 	msg := tgbotapi.NewMessage(id, text)
 	msg.ParseMode = tgbotapi.ModeHTML
 	msg.ReplyMarkup = kb
-	_, err := Bot.Send(msg)
+	res, err := Bot.Send(msg)
 	if err != nil {
-		logError(fmt.Sprintf("[send] [%s] %v, msg: %+v ", CFG.Users[id].Name, err, msg))
+		logError(fmt.Sprintf("[send] [%s] %v, msg: %#v ", CFG.Users[id].Name, err, msg))
 	}
-	return err
+	return res, err
 }
 
 // edit message with inline keyboard
 func editMessage(m *tgbotapi.Message, textNew string, kbNew tgbotapi.InlineKeyboardMarkup, kbReplace bool) error {
 	var kb tgbotapi.InlineKeyboardMarkup
+	var msg tgbotapi.Chattable
 	if kbReplace {
 		kb = kbNew
 	} else {
 		kb = *m.ReplyMarkup
 	}
-	msg := tgbotapi.NewEditMessageTextAndMarkup(m.Chat.ID, m.MessageID, textNew, kb)
-	msg.ParseMode = tgbotapi.ModeHTML
+	if textNew == "" {
+		tmp := tgbotapi.NewEditMessageReplyMarkup(m.Chat.ID, m.MessageID, kb)
+		msg = &tmp
+	} else {
+		tmp := tgbotapi.NewEditMessageTextAndMarkup(m.Chat.ID, m.MessageID, textNew, kb)
+		tmp.ParseMode = tgbotapi.ModeHTML
+		msg = &tmp
+	}
 	_, err := Bot.Send(msg)
 	if err != nil {
-		logError(fmt.Sprintf("[edit] %v, msg: %+v ", err, msg))
+		logError(fmt.Sprintf("[edit] %v, msg: %#v ", err, msg))
 	}
 	return err
 }
@@ -599,7 +606,16 @@ func genKeyboard(matrix [][]map[string]string) tgbotapi.InlineKeyboardMarkup {
 
 // shortcut for edit only text
 func editText(m *tgbotapi.Message, txt string) error {
-	return editMessage(m, txt, tgbotapi.InlineKeyboardMarkup{[][]tgbotapi.InlineKeyboardButton{}}, false)
+	empty := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
+	if m.ReplyMarkup != nil {
+		return editMessage(m, txt, empty, false)
+	}
+	return editMessage(m, txt, empty, true)
+}
+
+// shortcut for edit only keyboard
+func editKeyboard(m *tgbotapi.Message, kb tgbotapi.InlineKeyboardMarkup) error {
+	return editMessage(m, "", kb, true)
 }
 
 // shortcut for edit text and keyboard
@@ -608,8 +624,9 @@ func editTextAndKeyboard(m *tgbotapi.Message, txt string, kb tgbotapi.InlineKeyb
 }
 
 // shortcut for simple text message
-func sendTo(id int64, text string) error {
-	return sendMessage(id, text, tgbotapi.InlineKeyboardMarkup{[][]tgbotapi.InlineKeyboardButton{}})
+func sendTo(id int64, text string) (tgbotapi.Message, error) {
+	empty := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
+	return sendMessage(id, text, empty)
 }
 
 // broadcast message to all users
@@ -619,7 +636,7 @@ func broadcastSend(text string) string {
 		return fmtErr("empty message")
 	}
 	for uid := range CFG.Users {
-		err := sendTo(uid, text)
+		_, err := sendTo(uid, text)
 		if err == nil {
 			res += fmt.Sprintf("%d OK\n", uid)
 		} else {
@@ -928,7 +945,7 @@ func adminHandler(msg string) string {
 	case "send":
 		user, text := splitArgs(arg)
 		id, _ := strconv.ParseInt(user, 10, 64)
-		err = sendTo(id, text)
+		_, err = sendTo(id, text)
 		if err == nil {
 			res = "Message sent"
 		} else {
@@ -1231,6 +1248,10 @@ func main() {
 			var msg string                       // input message
 			var res string                       // output message
 			var kb tgbotapi.InlineKeyboardMarkup // output keyboard markup
+
+			// send dummy message
+			tmpMsg, _ := sendTo(uid, "Waiting...")
+
 			cmd := u.Message.Command()
 			cmdArgs := u.Message.CommandArguments()
 			if cmd != "" {
@@ -1298,19 +1319,36 @@ func main() {
 		SEND:
 			if res != "" {
 				if len(kb.InlineKeyboard) > 0 {
-					sendMessage(uid, res, kb)
+					editTextAndKeyboard(&tmpMsg, res, kb)
 				} else {
-					sendTo(uid, res)
+					editText(&tmpMsg, res)
 				}
+			} else {
+				Bot.Request(tgbotapi.NewDeleteMessage(uid, tmpMsg.MessageID))
 			}
 			// callback updates
 		} else if u.CallbackData() != "" {
 			logInfo(fmt.Sprintf("[callback] [%s] %s", CFG.Users[uid].Name, u.CallbackData()))
+			// skip dummy button
+			if u.CallbackData() == "dummy" {
+				continue
+			}
 			msg := u.CallbackQuery.Message
 			var res string                       // output message
 			var kb tgbotapi.InlineKeyboardMarkup // output keyboard markup
 			mode, args := splitArgs(u.CallbackData())
 			action, rawCmd := splitArgs(args)
+
+			// send dummy message or edit existing
+			switch action {
+			case "send":
+				tmpMsg, _ := sendTo(uid, "Waiting...")
+				// update pointer for message to edit after getting result
+				msg = &tmpMsg
+			case "edit":
+				// hide existing keyboard while waiting
+				editKeyboard(msg, genKeyboard([][]map[string]string{{{"Waiting...": "dummy"}}}))
+			}
 
 			switch mode {
 			case "raw":
@@ -1327,21 +1365,11 @@ func main() {
 			// restore mode if it was changed by another command
 			CFG.Users[uid].Mode = mode
 
-			switch action {
-			case "send":
-				if len(kb.InlineKeyboard) > 0 {
-					sendMessage(uid, res, kb)
-				} else {
-					sendTo(uid, res)
-				}
-			case "edit":
-				if len(kb.InlineKeyboard) > 0 {
-					editTextAndKeyboard(msg, res, kb)
-				} else {
-					editText(msg, res)
-				}
-			default:
-				logWarning(fmt.Sprintf("[callback] wrong action: %s", action))
+			// edit message
+			if len(kb.InlineKeyboard) > 0 {
+				editTextAndKeyboard(msg, res, kb)
+			} else {
+				editText(msg, res)
 			}
 		CALLBACK:
 			Bot.Request(tgbotapi.NewCallback(u.CallbackQuery.ID, "Done"))
