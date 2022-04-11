@@ -269,6 +269,7 @@ const HELPUSER string = `
 /report [args] - switch to feedback mode
 /search [args] - switch to search mode
 /ping [args] - switch to ping mode
+/calc [args] - switch to ip calc mode
 
 <code>args</code> - optional commands, which can be executed immediately, like you are already in this mode.
 
