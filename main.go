@@ -34,6 +34,7 @@ type Config struct {
 	Admin         int64           `yaml:"admin"`
 	Users         map[int64]*User `yaml:"users"`
 	InkoToolsAPI  string          `yaml:"inkotools_api_url"`
+	GraydbURL     string          `yaml:"graydb_url"`
 	DebugMode     bool            `yaml:"debug"`
 }
 
@@ -1050,28 +1051,32 @@ func calcHandler(arg string) string {
 }
 
 // client ip / contract id handler
-func clientHandler(cl string, args string) (string, tgbotapi.InlineKeyboardMarkup) {
+func clientHandler(client string, args string) (string, tgbotapi.InlineKeyboardMarkup) {
 	var res string                       // text message result
 	var kb tgbotapi.InlineKeyboardMarkup // inline keyboard markup
 	var kbBtn string                     // full/short style switch button text
 	var cData Contract                   // client data struct
-	var endpoint string
-	var template string
-	logDebug(fmt.Sprintf("[clientHandler] cl: %s, args: %s", cl, args))
-	// cl is contract id or client ip address
-	if isContract(cl) {
-		endpoint = fmt.Sprintf("/gdb/%s/", cl)
-	} else {
-		endpoint = fmt.Sprintf("/gdb/by-ip/%s/", cl)
-	}
+	var endpoint, template string
+	logDebug(fmt.Sprintf("[clientHandler] client: %s, args: %s", client, args))
+	style, args := splitArgs(args)
 	// set full/short template and set keyboard button text
-	switch args {
+	switch style {
 	case "full":
 		template = "contract.tmpl"
 		kbBtn = "short"
-	default:
+	case "short":
 		template = "contract.short.tmpl"
 		kbBtn = "full"
+	default:
+		style = "short"
+		template = "contract.short.tmpl"
+		kbBtn = "full"
+	}
+	// client is contract id or ip address
+	if isContract(client) {
+		endpoint = fmt.Sprintf("/gdb/%s/?style=%s", client, style)
+	} else {
+		endpoint = fmt.Sprintf("/gdb/by-ip/%s/?style=%s", client, style)
 	}
 	resp, err := apiGet(endpoint)
 	if err != nil {
@@ -1079,10 +1084,10 @@ func clientHandler(cl string, args string) (string, tgbotapi.InlineKeyboardMarku
 	} else {
 		mapstructure.Decode(resp["data"], &cData)
 		res = fmtObj(cData, template)
-		gdbURL := fmt.Sprintf("https://graydb.inko.tools/index.php?id_aabon=%d", cData.ClientID)
+		gdbURL := strings.TrimRight(CFG.GraydbURL, "/") + fmt.Sprintf("/index.php?id_aabon=%d", cData.ClientID)
 		kb = tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(kbBtn, fmt.Sprintf("raw edit %s %s", cl, kbBtn)),
+				tgbotapi.NewInlineKeyboardButtonData(kbBtn, fmt.Sprintf("raw edit %s %s", client, kbBtn)),
 			),
 			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonURL("open in gray database", gdbURL),
