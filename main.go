@@ -1012,11 +1012,9 @@ func swHandler(ip string, port string, args string) (string, tgbotapi.InlineKeyb
 	if strings.Contains(args, "clear") {
 		logDebug(fmt.Sprintf("[swHandler] Clear result: %s", portClear(ip, port)))
 	}
-	// second part is for backward compatibility (arg f[ull] in raw command)
-	if strings.Contains(args, "full") || args != "" && strings.HasPrefix("full", args) {
+	if strings.Contains(args, "full") {
 		idx = 1
 	}
-	//
 	kb = genKeyboard([][]map[string]string{
 		{
 			// inverted view for full/short button calculated as (1 - idx)
