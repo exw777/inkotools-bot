@@ -1093,6 +1093,15 @@ func clientHandler(client string, args string) (string, tgbotapi.InlineKeyboardM
 				tgbotapi.NewInlineKeyboardButtonURL("open in gray database", gdbURL),
 			),
 		)
+		// check client switch ip and port and add port button
+		ip := fullIP(cData.SwitchIP, true)
+		port, err := strconv.Atoi(cData.Port)
+		if ip != "" && err == nil {
+			kb.InlineKeyboard[0] = append(
+				kb.InlineKeyboard[0],
+				tgbotapi.NewInlineKeyboardButtonData(
+					"port info", fmt.Sprintf("raw send %s %d", ip, port)))
+		}
 	}
 	return res, kb
 }
@@ -1329,6 +1338,7 @@ func main() {
 					editText(&tmpMsg, res)
 				}
 			} else {
+				logWarning("[message] Empty result")
 				Bot.Request(tgbotapi.NewDeleteMessage(uid, tmpMsg.MessageID))
 			}
 			// callback updates
