@@ -1,6 +1,5 @@
-{{- $warning := "\xE2\x9A\xA0" }}
 <i>ARP Table: </i>
-{{- if not . }}{{ $warning }}<code>empty</code>{{ end }}
+{{- if not . }}<code>empty</code>{{ end }}
 {{- range . }}
 <code>{{ .IP | printf "%-17s" }}</code>{{ if .State }}<code>  ONLINE</code>{{ end }}
 <code>{{ .Mac }}</code><code>{{ .VlanID | printf "%8d" }}</code>

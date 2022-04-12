@@ -1,22 +1,15 @@
-{{- $WARN := "\xE2\x80\xBC" }}
-{{- $disabled := "\xF0\x9F\x8C\x91" }}
-{{- $enabled := "\xF0\x9F\x8C\x95" }}
-{{- $warning := "\xE2\x9A\xA0" }}
-{{- $linkUp := "\xF0\x9F\x8C\x8E" }}
-{{- $linkDown := "\xF0\x9F\x93\xB5" }}
-{{- $link10 := "\xF0\x9F\x8C\x90" }}
 {{- range .}}
 <i>Port: </i><b>{{ .Port }}{{ .Type }} </b>
-{{ if not .State }}
-    {{- $disabled }}[PORT OFF]
+{{ if not .State -}}
+    🌑[PORT OFF]
 {{- else }}
-    {{- if eq .Speed "Auto" }}
-        {{- $enabled }}[PORT ON]
-    {{- else }}
-        {{- $warning }}[PORT ON]
+    {{- if eq .Speed "Auto" -}}
+        🌕[PORT ON]
+    {{- else -}}
+        ⚠️[PORT ON]
     {{- end }}
 {{- end }} <code>{{ .Speed }}</code>
-{{ if .Link }}{{ $linkUp }}[LINK UP] {{ else }}{{ $linkDown }}[LINK DOWN] {{ end -}}
+{{ if .Link }}🌎[LINK UP] {{ else }}📵[LINK DOWN] {{ end -}}
 <code>{{ .Status }}</code>
 {{- if .Cable }}
 {{- range .Cable }}
@@ -27,7 +20,7 @@
 {{- if .Description }}
 <i>Description: </i><code>{{ .Description }}</code>{{ end }}
 {{- if not .Learning }}
-<i>MAC learning: </i><code>disabled</code>{{ $WARN }}{{ end }}
+<i>MAC learning: </i><code>disabled</code>‼️{{ end }}
 {{- if .Autodowngrade }}
 <i>Autodowngrade: </i><code>enabled</code>{{ end }}
 {{- end }}

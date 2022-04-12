@@ -1,8 +1,4 @@
-{{- $warning := "\xE2\x9A\xA0" }}
-{{- $TEL := "\xF0\x9F\x93\x9E" }}
-{{- $HOUSE := "\xF0\x9F\x8F\xA0" }}
-{{- $OFFICE := "\xF0\x9F\x8F\xA2" }}
-[<code>{{ .ContractID }}</code>]{{ if .Terminated }}{{ $warning }}[TERMINATED]{{ end }}
+[<code>{{ .ContractID }}</code>]{{ if .Terminated }} ‼️TERMINATED‼️{{ end }}
 {{- if .Name }}
 <b>{{ .Name }}</b>
 {{- end }}
@@ -10,13 +6,13 @@
 <i>{{ .Company }}</i>
 {{- end }}
 {{- range .Contacts }}
-{{ $TEL }} <code>{{ . }}</code>
+📞 <code>{{ . }}</code>
 {{- end }}
 {{- if .Street }}
-{{ $HOUSE }} <code>{{ .Street }} {{ .House }}{{ if .Room }} - {{ .Room }}{{ end }}</code>
+🏠 <code>{{ .Street }} {{ .House }}{{ if .Room }} - {{ .Room }}{{ end }}</code>
 {{- end }}
 {{- if .Office }}
-{{ $OFFICE }} <code>{{ .Office }}</code>
+🏢 <code>{{ .Office }}</code>
 {{- end }}
 {{- if .SwitchIP }}
 <i>Switch: </i><code>{{ .SwitchIP }} {{ .Port }}</code>
@@ -65,9 +61,8 @@
 {{- end }}
 {{- end }}
 
-{{- define "account" -}}
-{{- $warning := "\xE2\x9A\xA0" }} [<code>{{ .ID }}</code>] 
-{{- if not .Enabled }}{{ $warning }}[<code>OFF</code>]{{ end }}
+{{- define "account" }} [<code>{{ .ID }}</code>] 
+{{- if not .Enabled }} ⚠️ [<code>OFF</code>]{{ end }}
 <i>Balance: </i><code>{{ .Balance }}</code> <i>Credit: </i><code>{{ .Credit }}</code>
 {{- if .Services }}
 <i>Services:</i>

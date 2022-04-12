@@ -1,21 +1,18 @@
-{{- $warning := "\xE2\x9A\xA0" }}
-{{- $left := "\xE2\x9F\xB5" }}
-{{- $right := "\xE2\x9F\xB6" }}
-<b>RX (port {{ $left }} client)</b>
+<b>RX (port ⟵ client)</b>
 <i>Total: </i><code>{{ fmtBytes .TotalRX false }}</code>
 <i>Now: </i><code>{{ fmtBytes .SpeedRX true }}/s</code>
 {{- if .ErrorsRX }}
-{{ $warning }}<b>RX Errors</b>
+<b>RX Errors</b>
 {{- range .ErrorsRX }}
 <i>{{ .Name }}: </i><code>{{ .Count }}</code>
 {{- end }}
 {{- end }}
 
-<b>TX (port {{ $right }} client)</b>
+<b>TX (port ⟶ client)</b>
 <i>Total: </i><code>{{ fmtBytes .TotalTX false }}</code>
 <i>Now: </i><code>{{ fmtBytes .SpeedTX true }}/s</code>
 {{- if .ErrorsTX }}
-{{ $warning }}<b>TX Errors</b>
+<b>TX Errors</b>
 {{- range .ErrorsTX }}
 <i>{{ .Name }}: </i><code>{{ .Count }}</code>
 {{- end }}

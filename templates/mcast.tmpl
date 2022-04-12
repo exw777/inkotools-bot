@@ -1,6 +1,5 @@
-{{- $warning := "\xE2\x9A\xA0" }}
 {{- if not .SourcePorts }}
-{{ $warning }}<b>No multicast source ports!</b>
+<b>No multicast source ports</b>‼️
 {{- end }}
 <i>Multicast: </i><code>{{ fmtState .State}}</code>
 {{- if .State }}

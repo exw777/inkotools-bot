@@ -1,6 +1,5 @@
-{{- $warning := "\xE2\x9A\xA0" }}
 <i>ACL: </i>
-{{- if not . }}{{ $warning }}<b>No rules!</b>{{ end }}
+{{- if not . }}<code>no rules</code>{{ end }}
 {{- range . }}
 <code>{{ .IP | printf "%-16s" }}</code>
 <code>{{ .Mask | printf "%-16s" }}</code> <code>{{ .Mode }}</code>

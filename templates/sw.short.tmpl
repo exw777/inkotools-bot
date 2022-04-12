@@ -1,2 +1,6 @@
 [<code>{{ slice .IP 8 }}</code>] [{{ .Model }}]
 <b>{{ .Location }}</b>
+{{- if not .Status }}
+
+⚠️ <b>Switch is unavailable!</b>
+{{- end }}
