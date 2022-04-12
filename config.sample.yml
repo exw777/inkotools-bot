@@ -12,5 +12,6 @@ users:  # map of authorized users
     123456789:  # you can add admin here to access user commands
         name: admin
 inkotools_api_url: http://127.0.0.1:9999/  # url to inkotools api service
+graydb_url: https://graydb.inko.tools/  # url to gray database
 debug: false  # enable debug logging
 ...
