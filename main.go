@@ -676,7 +676,7 @@ func requestAPI(method string, endpoint string, args map[string]interface{}) (ma
 		req, err = http.NewRequest(method, url, reqBody)
 	}
 	if err != nil {
-		logError(fmt.Sprintf("[API %s] Creating request object failed: %v, url: %s, body: %v", method, err, url, reqBody))
+		logError(fmt.Sprintf("[API %s] Creating request object failed: %v, url: %s", method, err, url))
 		return res, errors.New("Creating request object failed")
 	}
 	req.Header.Add("Content-Type", "application/json")
@@ -684,14 +684,14 @@ func requestAPI(method string, endpoint string, args map[string]interface{}) (ma
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		logError(fmt.Sprintf("[API %s] Request failed: %v, request: %+v", method, err, req))
+		logError(fmt.Sprintf("[API %s] Request failed: %v, endpoint: %s", method, err, endpoint))
 		return res, errors.New("API request failed")
 	}
 	defer resp.Body.Close()
 	// parse response
 	err = json.NewDecoder(resp.Body).Decode(&res)
 	if err != nil {
-		logError(fmt.Sprintf("[API %s] Response json decode failed: %v, body: %v", method, err, resp.Body))
+		logError(fmt.Sprintf("[API %s] Response json decode failed: %v, endpoint: %s", method, err, endpoint))
 		return res, errors.New("API response decode failed")
 	}
 	// if we have no errors from api - return result
@@ -701,7 +701,7 @@ func requestAPI(method string, endpoint string, args map[string]interface{}) (ma
 	}
 	// parse errors from api
 	if res["detail"] != nil {
-		logError(fmt.Sprintf("[API %s] Returned %d error: %+v, request: %+v", method, resp.StatusCode, res["detail"], req))
+		logError(fmt.Sprintf("[API %s] Returned %d error: %v, endpoint: %s", method, resp.StatusCode, res["detail"], endpoint))
 		switch res["detail"].(type) {
 		case string:
 			return res, errors.New(res["detail"].(string))
@@ -709,7 +709,7 @@ func requestAPI(method string, endpoint string, args map[string]interface{}) (ma
 			return res, fmt.Errorf("%d", resp.StatusCode)
 		}
 	}
-	logError(fmt.Sprintf("[API %s] Returned %d error, raw response: %+v, request: %+v", method, resp.StatusCode, res, req))
+	logError(fmt.Sprintf("[API %s] Returned %d error, raw response: %#v, endpoint: %s", method, resp.StatusCode, res, endpoint))
 	return res, fmt.Errorf("%d", resp.StatusCode)
 }
 
@@ -724,8 +724,10 @@ func apiDelete(endpoint string) (map[string]interface{}, error) {
 }
 
 // get switch summary and format it with template
-func swSummary(ip string, style string) string {
-	var template string
+func swSummary(ip string, style string) (string, error) {
+	var res, template string
+	var err error
+	var sw Switch
 	switch style {
 	case "short":
 		template = "sw.short.tmpl"
@@ -734,20 +736,19 @@ func swSummary(ip string, style string) string {
 	}
 	resp, err := apiGet(fmt.Sprintf("/sw/%s/", ip))
 	if err != nil {
-		return fmtErr(err.Error())
+		return fmtErr(err.Error()), err
 	}
 	// serialize data from returned map to struct
-	var sw Switch
 	mapstructure.Decode(resp["data"], &sw)
-	res := fmtObj(sw, template)
+	res = fmtObj(sw, template)
 	if !sw.Status {
-		res += fmtErr("Switch is unavailable!")
+		err = errors.New("unavailable")
 	}
-	return res
+	return res, err
 }
 
 // get port summary and format it with template
-func portSummary(ip string, port string, style string) string {
+func portSummary(ip string, port string, style string) (string, error) {
 	var res string
 	var ports []Port
 	var linkUp bool
@@ -755,7 +756,7 @@ func portSummary(ip string, port string, style string) string {
 	var bandwidth PortBandwidth
 	resp, err := apiGet(fmt.Sprintf("/sw/%s/ports/%s/", ip, port))
 	if err != nil {
-		return fmtErr(err.Error())
+		return fmtErr(err.Error()), err
 	}
 	// returned value is list (for combo ports - two values)
 	mapstructure.Decode(resp["data"], &ports)
@@ -889,7 +890,7 @@ func portSummary(ip string, port string, style string) string {
 	}
 	res += printUpdated()
 
-	return res
+	return res, err
 }
 
 // clear port counters
@@ -999,14 +1000,16 @@ func rawHandler(raw string) (string, tgbotapi.InlineKeyboardMarkup) {
 
 // switch ip handler
 func swHandler(ip string, port string, args string) (string, tgbotapi.InlineKeyboardMarkup) {
-	var res string                       // text message result
+	var res string // text message result
+	var err error
 	var kb tgbotapi.InlineKeyboardMarkup // inline keyboard markup
-	view := []string{"short", "full"}    // view styles for port summary
+	pView := []string{"short", "full"}   // view styles for port summary
 	idx := 0                             // default index - short view
 	logDebug(fmt.Sprintf("[swHandler] ip: %s, port: %s, args: '%s'", ip, port, args))
-	if port == "" {
-		res = swSummary(ip, "full")
-		goto RETURN
+	// empty or invalid port - return full sw info
+	if _, err := strconv.Atoi(port); err != nil {
+		res, _ = swSummary(ip, "full")
+		return res, kb
 	}
 	// clear counters if needed
 	if strings.Contains(args, "clear") {
@@ -1015,24 +1018,29 @@ func swHandler(ip string, port string, args string) (string, tgbotapi.InlineKeyb
 	if strings.Contains(args, "full") {
 		idx = 1
 	}
+	// for ports switch view is always short
+	res, err = swSummary(ip, "short")
+	// no need to check port if switch is unavailable
+	if err != nil {
+		return res, kb
+	}
+	// get port summary
+	p, err := portSummary(ip, port, pView[idx])
+	if err != nil {
+		return p, kb
+	}
+	res += p
 	kb = genKeyboard([][]map[string]string{
 		{
 			// inverted view for full/short button calculated as (1 - idx)
-			{view[1-idx]: fmt.Sprintf("raw edit %s %s %s", ip, port, view[1-idx])},
+			{pView[1-idx]: fmt.Sprintf("raw edit %s %s %s", ip, port, pView[1-idx])},
 		},
 		{
-			{"refresh": fmt.Sprintf("raw edit %s %s %s", ip, port, view[idx])},
-			{"clear": fmt.Sprintf("raw edit %s %s %s clear", ip, port, view[idx])},
-			{"repeat": fmt.Sprintf("raw send %s %s %s", ip, port, view[idx])},
+			{"refresh": fmt.Sprintf("raw edit %s %s %s", ip, port, pView[idx])},
+			{"clear": fmt.Sprintf("raw edit %s %s %s clear", ip, port, pView[idx])},
+			{"repeat": fmt.Sprintf("raw send %s %s %s", ip, port, pView[idx])},
 		},
 	})
-	// for ports switch view is always short
-	res = swSummary(ip, "short")
-	// get port summary only if no errors
-	if !strings.Contains(res, "ERROR") {
-		res += portSummary(ip, port, view[idx])
-	}
-RETURN:
 	return res, kb
 }
 
