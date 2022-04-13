@@ -1,15 +1,15 @@
 {{- range .}}
 <i>Port: </i><b>{{ .Port }}{{ .Type }} </b>
 {{ if not .State -}}
-    🌑[PORT OFF]
+    &#127761;[PORT OFF]
 {{- else }}
     {{- if eq .Speed "Auto" -}}
-        🌕[PORT ON]
+        &#127765;[PORT ON]
     {{- else -}}
-        ⚠️[PORT ON]
+        &#9888;[PORT ON]
     {{- end }}
 {{- end }} <code>{{ .Speed }}</code>
-{{ if .Link }}🌎[LINK UP] {{ else }}📵[LINK DOWN] {{ end -}}
+{{ if .Link }}&#127758;[LINK UP] {{ else }}&#128245;[LINK DOWN] {{ end -}}
 <code>{{ .Status }}</code>
 {{- if .Cable }}
 {{- range .Cable }}
@@ -20,7 +20,7 @@
 {{- if .Description }}
 <i>Description: </i><code>{{ .Description }}</code>{{ end }}
 {{- if not .Learning }}
-<i>MAC learning: </i><code>disabled</code>‼️{{ end }}
+<i>MAC learning: </i><code>disabled</code>&#8252;{{ end }}
 {{- if .Autodowngrade }}
 <i>Autodowngrade: </i><code>enabled</code>{{ end }}
 {{- end }}

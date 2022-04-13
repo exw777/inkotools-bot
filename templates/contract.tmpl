@@ -1,4 +1,4 @@
-[<code>{{ .ContractID }}</code>]{{ if .Terminated }} ‼️TERMINATED‼️{{ end }}
+[<code>{{ .ContractID }}</code>]{{ if .Terminated }} &#8252;TERMINATED&#8252;{{ end }}
 {{- if .Name }}
 <b>{{ .Name }}</b>
 {{- end }}
@@ -6,13 +6,13 @@
 <i>{{ .Company }}</i>
 {{- end }}
 {{- range .Contacts }}
-📞 <code>{{ . }}</code>
+&#128222; <code>{{ . }}</code>
 {{- end }}
 {{- if .Street }}
-🏠 <code>{{ .Street }} {{ .House }}{{ if .Room }} - {{ .Room }}{{ end }}</code>
+&#127968; <code>{{ .Street }} {{ .House }}{{ if .Room }} - {{ .Room }}{{ end }}</code>
 {{- end }}
 {{- if .Office }}
-🏢 <code>{{ .Office }}</code>
+&#127970; <code>{{ .Office }}</code>
 {{- end }}
 {{- if .SwitchIP }}
 <i>Switch: </i><code>{{ .SwitchIP }} {{ .Port }}</code>
@@ -62,7 +62,7 @@
 {{- end }}
 
 {{- define "account" }} [<code>{{ .ID }}</code>] 
-{{- if not .Enabled }} ⚠️ [<code>OFF</code>]{{ end }}
+{{- if not .Enabled }} &#9888; <b>blocked</b>{{ end }}
 <i>Balance: </i><code>{{ .Balance }}</code> <i>Credit: </i><code>{{ .Credit }}</code>
 {{- if .Services }}
 <i>Services:</i>
