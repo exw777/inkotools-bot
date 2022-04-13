@@ -220,24 +220,6 @@ type TelAccount struct {
 	Numbers        []string `mapstructure:"number_list"`
 }
 
-// XCHAR - unicode symbol X
-const XCHAR string = "\xE2\x9D\x8C"
-
-// VCHAR - unicode symbol V
-const VCHAR string = "\xE2\x9C\x85"
-
-// FAILCHAR - unicode symbol crossed circle
-const FAILCHAR string = "\xF0\x9F\x9A\xAB"
-
-// OKCHAR - unicode symbol OK
-const OKCHAR string = "\xF0\x9F\x86\x97"
-
-// UPCHAR - unicode symbol UP
-const UPCHAR string = "\xF0\x9F\x86\x99"
-
-// WARNCHAR - unicode symbol !!
-const WARNCHAR string = "\xE2\x80\xBC"
-
 // ColorReset - ANSI color
 const ColorReset string = "\033[0m"
 
@@ -371,7 +353,7 @@ func isContract(s string) bool {
 
 // print error in message
 func fmtErr(e string) string {
-	return "\n<b>ERROR</b>" + WARNCHAR + "\n<code>" + e + "</code>\n"
+	return "\n<b>ERROR</b>&#8252;\n<code>" + e + "</code>\n"
 }
 
 // print object formatted with template
