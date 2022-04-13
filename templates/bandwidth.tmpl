@@ -1,9 +1,0 @@
-{{- if or .RX .TX }}
-<b>Bandwidth limits:</b>
-{{- if .RX }}
-<i>RX: </i><code>{{ fmtKbits .RX }}/s</code>
-{{- end }}
-{{- if .TX }}
-<i>TX: </i><code>{{ fmtKbits .TX }}/s</code>
-{{- end }}
-{{ end }}

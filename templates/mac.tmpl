@@ -1,9 +1,0 @@
-<i>MAC Table: </i>
-{{- if not . }}<code>empty</code>{{ end }}
-{{- if gt (len .) 25 }}
-{{ len . }} entries, pagination not supported yet...
-{{- else }}
-{{- range . }}
-<code>{{ .Mac }}</code><code>{{ .VlanID | printf "%8d" }}</code>
-{{- end }}
-{{- end }}

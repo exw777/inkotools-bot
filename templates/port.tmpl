@@ -1,0 +1,158 @@
+{{- define "port" }}
+{{- range .}}
+<i>Port: </i><b>{{ .Port }}{{ .Type }} </b>
+{{ if not .State -}}
+    &#127761;[PORT OFF]
+{{- else }}
+    {{- if eq .Speed "Auto" -}}
+        &#127765;[PORT ON]
+    {{- else -}}
+        &#9888;[PORT ON]
+    {{- end }}
+{{- end }} <code>{{ .Speed }}</code>
+{{ if .Link }}&#127758;[LINK UP] {{ else }}&#128245;[LINK DOWN] {{ end -}}
+<code>{{ .Status }}</code>
+{{- if .Cable }}
+{{- range .Cable }}
+<code>Pair {{ .Pair }} {{ .State }}
+{{- if ne .Len 666 }} {{ .Len }} M{{ end }}</code>
+{{- end -}}
+{{- end }}
+{{- if .Description }}
+<i>Description: </i><code>{{ .Description }}</code>{{ end }}
+{{- if not .Learning }}
+<i>MAC learning: </i><code>disabled</code>&#8252;{{ end }}
+{{- if .Autodowngrade }}
+<i>Autodowngrade: </i><code>enabled</code>{{ end }}
+{{- end }}
+{{ end }}
+
+{{- define "bandwidth" }}
+{{- if or .RX .TX }}
+<b>Bandwidth limits:</b>
+{{- if .RX }}
+<i>RX: </i><code>{{ fmtKbits .RX }}/s</code>
+{{- end }}
+{{- if .TX }}
+<i>TX: </i><code>{{ fmtKbits .TX }}/s</code>
+{{- end }}
+{{ end }}
+{{- end }}
+
+{{- define "counters" }}
+{{- if .Error}}
+<i>Counters: </i><pre>{{ .Error }}</pre>
+{{- else }}
+<b>RX (port &#10229; client)</b>
+<i>Total: </i><code>{{ fmtBytes .TotalRX false }}</code>
+<i>Now: </i><code>{{ fmtBytes .SpeedRX true }}/s</code>
+{{- if .ErrorsRX }}
+<b>RX Errors</b>
+{{- range .ErrorsRX }}
+<i>{{ .Name }}: </i><code>{{ .Count }}</code>
+{{- end }}
+{{- end }}
+
+<b>TX (port &#10230; client)</b>
+<i>Total: </i><code>{{ fmtBytes .TotalTX false }}</code>
+<i>Now: </i><code>{{ fmtBytes .SpeedTX true }}/s</code>
+{{- if .ErrorsTX }}
+<b>TX Errors</b>
+{{- range .ErrorsTX }}
+<i>{{ .Name }}: </i><code>{{ .Count }}</code>
+{{- end }}
+{{- end }}
+{{- end }}
+{{ end }}
+
+{{- define "vlan" }}
+{{- if .Error}}
+<i>VLAN: </i><pre>{{ .Error }}</pre>
+{{- else }}
+{{- if .Untagged }}
+<i>VLAN untagged: </i>
+{{- range .Untagged -}}<code>{{ . }}</code> {{ end }}
+{{ end }}
+{{- if .Tagged }}
+<i>VLAN tagged: </i>
+{{- range .Tagged -}}<code>{{ . }}</code> {{ end }}
+{{ end }}
+{{- end }}
+{{- end }}
+
+{{- define "acl" }}
+<i>ACL: </i>
+{{- if .Error}}
+<pre>{{ .Error }}</pre>
+{{- else }}
+{{- if not .Entries }}<code>no rules</code>{{ end }}
+{{- range .Entries }}
+<code>{{ .IP | printf "%-16s" }}</code>
+<code>{{ .Mask | printf "%-16s" }}</code> <code>{{ .Mode }}</code>
+{{- end }}
+{{- end }}
+{{ end }}
+
+{{- define "mcast" }}
+{{- if .Error}}
+<i>Multicast: </i><pre>{{ .Error }}</pre>
+{{- else }}
+{{- if not .SourcePorts }}
+<b>No multicast source ports</b>&#8252;
+{{ end }}
+<i>Multicast: </i><code>{{ fmtState .State}}</code>
+{{- if .State }}
+<i>Filters: </i>
+{{- if not .Filters }}<code>no limits</code>{{ end }}
+{{- range .Filters }}
+<code>{{ . }}</code>
+{{- end }}
+<i>Groups: </i>
+{{- if not .Groups }}<code>empty</code>{{ end }}
+{{- range .Groups }}
+<code>{{ . }}</code>
+{{- end }}
+{{- end }}
+{{- end }}
+{{ end }}
+
+{{- define "mac" }}
+<i>MAC Table: </i>
+{{- if .Error}}
+<pre>{{ .Error }}</pre>
+{{- else }}
+{{- if not .Entries }}<code>empty</code>{{ end }}
+{{- if gt (len .Entries) 25 }}
+{{ len .Entries }} entries, pagination not supported yet...
+{{- else }}
+{{- range .Entries }}
+<code>{{ .Mac }}</code><code>{{ .VlanID | printf "%8d" }}</code>
+{{- end }}
+{{- end }}
+{{- end }}
+{{ end }}
+
+{{- define "arp" }}
+<i>ARP Table: </i>
+{{- if and .Error (not .Entries) }}
+<pre>{{ .Error }}</pre>
+{{- else }}
+{{- if not .Entries }}<code>empty</code>{{ end }}
+{{- range .Entries }}
+<code>{{ .IP | printf "%-17s" }}</code>{{ if .State }}<code>  ONLINE</code>{{ end }}
+<code>{{ .Mac }}</code><code>{{ .VlanID | printf "%8d" }}</code>
+{{- end }}
+{{- if .Error }}<pre>{{ .Error }}</pre>{{ end }}
+{{- end }}
+{{ end }}
+
+{{- template "port" .Slots }}
+{{- template "bandwidth" .Bandwidth }}
+{{- template "counters" .Counters }}
+{{- if eq .Style "full" }}
+{{- template "vlan" .VLAN }}
+{{- template "acl" .ACL }}
+{{- template "mcast" .Multicast }}
+{{- template "mac" .MAC }}
+{{- template "arp" .ARP }}
+{{- end -}}

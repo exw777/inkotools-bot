@@ -1,6 +1,0 @@
-<i>ARP Table: </i>
-{{- if not . }}<code>empty</code>{{ end }}
-{{- range . }}
-<code>{{ .IP | printf "%-17s" }}</code>{{ if .State }}<code>  ONLINE</code>{{ end }}
-<code>{{ .Mac }}</code><code>{{ .VlanID | printf "%8d" }}</code>
-{{- end }}

@@ -65,6 +65,39 @@ type Switch struct {
 	Status   bool   `mapstructure:"status"`
 }
 
+// PortSummary type
+type PortSummary struct {
+	Style      string
+	Slots      []Port
+	LinkUp     bool
+	PortNumber int
+	Bandwidth  PortBandwidth
+	Counters   struct {
+		PortCounters `mapstructure:",squash"`
+		Error        string
+	}
+	VLAN struct {
+		PortVlan `mapstructure:",squash"`
+		Error    string
+	}
+	ACL struct {
+		Entries []PortACL
+		Error   string
+	}
+	Multicast struct {
+		PortMulticast `mapstructure:",squash"`
+		Error         string
+	}
+	MAC struct {
+		Entries []PortMac
+		Error   string
+	}
+	ARP struct {
+		Entries []ARPEntry
+		Error   string
+	}
+}
+
 // Port type
 type Port struct {
 	Port          int    `mapstructure:"port"`
@@ -134,7 +167,6 @@ type PortACL struct {
 
 // PortMulticast type
 type PortMulticast struct {
-	Port        int
 	SourcePorts []int `mapstructure:"source"`
 	MemberPorts []int `mapstructure:"member"`
 	State       bool
@@ -683,7 +715,7 @@ func requestAPI(method string, endpoint string, args map[string]interface{}) (ma
 	}
 	// parse errors from api
 	if res["detail"] != nil {
-		logError(fmt.Sprintf("[API %s] Returned %d error: %v, endpoint: %s", method, resp.StatusCode, res["detail"], endpoint))
+		logWarning(fmt.Sprintf("[API %s] Returned %d error: %v, endpoint: %s", method, resp.StatusCode, res["detail"], endpoint))
 		switch res["detail"].(type) {
 		case string:
 			return res, errors.New(res["detail"].(string))
@@ -731,147 +763,164 @@ func swSummary(ip string, style string) (string, error) {
 
 // get port summary and format it with template
 func portSummary(ip string, port string, style string) (string, error) {
-	var res string
-	var ports []Port
-	var linkUp bool
-	var counters PortCounters
-	var bandwidth PortBandwidth
+	var res string        // result string
+	var pInfo PortSummary // main port summary object
+	var accessPorts []int // list of access ports (for checks)
+	var arpTmp []ARPEntry // for arp table deduplication
+
+	// get slots info, return on error
 	resp, err := apiGet(fmt.Sprintf("/sw/%s/ports/%s/", ip, port))
 	if err != nil {
-		return fmtErr(err.Error()), err
+		return res, err
 	}
-	// returned value is list (for combo ports - two values)
-	mapstructure.Decode(resp["data"], &ports)
-	// format ports summary
-	res += fmtObj(ports, "ports.tmpl")
-	for p := range ports {
-		if ports[p].Link {
-			linkUp = true
+	mapstructure.Decode(resp["data"], &pInfo.Slots)
+
+	// set common port values
+	pInfo.PortNumber = pInfo.Slots[0].Port
+	pInfo.Style = style
+	for p := range pInfo.Slots {
+		if pInfo.Slots[p].Link {
+			pInfo.LinkUp = true
 			break
 		}
 	}
+
 	// get port bandwidth
 	resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/bandwidth", ip, port))
 	if err == nil {
-		mapstructure.Decode(resp["data"], &bandwidth)
-		res += fmtObj(bandwidth, "bandwidth.tmpl")
+		mapstructure.Decode(resp["data"], &pInfo.Bandwidth)
 	}
+
 	// get port counters
 	resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/counters", ip, port))
-	if err == nil {
-		mapstructure.Decode(resp["data"], &counters)
-		res += fmtObj(counters, "counters.tmpl")
+	if err != nil {
+		pInfo.Counters.Error = err.Error()
+	} else {
+		mapstructure.Decode(resp["data"], &pInfo.Counters)
 	}
+
+	// all other data for full style
 	if style == "full" {
-		var v PortVlan
-		var acl []PortACL
-		var macTable []PortMac
-		var arpTable []ARPEntry
-		var arpTmp []ARPEntry
-		var accessPorts []int
-		var mcast PortMulticast
-		// get vlan
-		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/vlan", ip, port))
-		if err == nil {
-			mapstructure.Decode(resp["data"], &v)
-			res += fmtObj(v, "vlan.tmpl")
-		}
-		// acl, mac and arp only for access ports
+
+		// get list of access ports
 		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/", ip))
 		if err == nil {
 			mapstructure.Decode(resp["data"].(map[string]interface{})["access_ports"], &accessPorts)
 		}
-		if !intInList(ports[0].Port, accessPorts) {
-			goto END
+
+		// get vlan
+		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/vlan", ip, port))
+		if err != nil {
+			pInfo.VLAN.Error = err.Error()
+		} else {
+			mapstructure.Decode(resp["data"], &pInfo.VLAN)
 		}
-		// get acl
-		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/acl", ip, port))
-		if err == nil {
-			mapstructure.Decode(resp["data"], &acl)
-			res += fmtObj(acl, "acl.tmpl")
-		}
-		// get multicast data
-		mcast.Port = ports[0].Port
-		// source and member ports
-		resp, err = apiGet(fmt.Sprintf("/sw/%s/multicast", ip))
-		if err == nil {
-			mapstructure.Decode(resp["data"], &mcast)
-			mcast.State = intInList(mcast.Port, mcast.MemberPorts)
-			if mcast.State {
-				// mcast filters
-				resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/mcast/filters", ip, port))
-				if err == nil {
-					mapstructure.Decode(resp["data"], &mcast.Filters)
-				}
-				if linkUp {
-					// mcast groups
-					resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/mcast/groups", ip, port))
+
+		// all other data only for access ports
+		if !intInList(pInfo.PortNumber, accessPorts) {
+			e := "Transit ports are not supported"
+			pInfo.ACL.Error = e
+			pInfo.Multicast.Error = e
+			pInfo.MAC.Error = e
+			pInfo.ARP.Error = e
+		} else {
+
+			// get acl
+			resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/acl", ip, port))
+			if err != nil {
+				pInfo.ACL.Error = err.Error()
+			} else {
+				mapstructure.Decode(resp["data"], &pInfo.ACL.Entries)
+			}
+
+			// get multicast data
+			resp, err = apiGet(fmt.Sprintf("/sw/%s/multicast", ip))
+			if err != nil {
+				pInfo.Multicast.Error = err.Error()
+			} else {
+				mapstructure.Decode(resp["data"], &pInfo.Multicast)
+				// check if port is member of mvlan
+				pInfo.Multicast.State = intInList(pInfo.PortNumber, pInfo.Multicast.MemberPorts)
+				if pInfo.Multicast.State {
+					// mcast filters
+					resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/mcast/filters", ip, port))
 					if err == nil {
-						mapstructure.Decode(resp["data"], &mcast.Groups)
+						mapstructure.Decode(resp["data"], &pInfo.Multicast.Filters)
+					}
+					if pInfo.LinkUp {
+						// mcast groups
+						resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/mcast/groups", ip, port))
+						if err == nil {
+							mapstructure.Decode(resp["data"], &pInfo.Multicast.Groups)
+						}
 					}
 				}
 			}
-			res += fmtObj(mcast, "mcast.tmpl")
-		}
-		// get mac table only if link is up
-		if !linkUp {
-			goto END
-		}
-		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/mac", ip, port))
-		if err == nil {
-			mapstructure.Decode(resp["data"], &macTable)
-			res += fmtObj(macTable, "mac.tmpl")
-		}
-		// only if mac address table is not empty
-		if len(macTable) == 0 {
-			goto END
-		}
-		// get arp table for acl permit ip
-		for _, a := range acl {
-			if a.Mode == "permit" {
-				resp, err = requestAPI("POST", "/arpsearch", map[string]interface{}{"ip": a.IP})
-				if err == nil {
-					mapstructure.Decode(resp["data"], &arpTmp)
-					// append to global arp
-					arpTable = append(arpTable, arpTmp...)
+
+			// get mac table only if link is up
+			if pInfo.LinkUp {
+				resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/mac", ip, port))
+				if err != nil {
+					pInfo.MAC.Error = err.Error()
 				} else {
-					res += fmtErr("Failed to get arp by ip")
+					mapstructure.Decode(resp["data"], &pInfo.MAC.Entries)
 				}
 			}
-		}
-		// get arp for each mac address
-		for _, m := range macTable {
-			resp, err = requestAPI("POST", "/arpsearch", map[string]interface{}{"mac": m.Mac, "src_sw_ip": ip})
-			if err == nil {
-				mapstructure.Decode(resp["data"], &arpTmp)
-				// append to global arp
-				arpTable = append(arpTable, arpTmp...)
-			} else {
-				res += fmtErr("Failed to get arp by mac")
-			}
-		}
-		// remove duplicate entries from global arp table
-		arpTmp = arpTable
-		arpTable = nil
-		for _, a := range arpTmp {
-			dup := false
-			for _, u := range arpTable {
-				if u == a {
-					dup = true
-					break
+
+			// get arp only if mac address table is not empty
+			if len(pInfo.MAC.Entries) > 0 {
+				// get arp table for acl permit ip
+				for _, a := range pInfo.ACL.Entries {
+					if a.Mode == "permit" {
+						resp, err = requestAPI("POST", "/arpsearch", map[string]interface{}{"ip": a.IP})
+						if err != nil {
+							logWarning(fmt.Sprintf("[ARP] failed to get %s", a.IP))
+							pInfo.ARP.Error += err.Error() + "\n"
+						} else {
+							mapstructure.Decode(resp["data"], &arpTmp)
+							// append to global arp
+							pInfo.ARP.Entries = append(pInfo.ARP.Entries, arpTmp...)
+						}
+					}
 				}
-			}
-			if !dup {
-				arpTable = append(arpTable, a)
-			}
-		}
+				// get arp for each mac address
+				for _, m := range pInfo.MAC.Entries {
+					resp, err = requestAPI("POST", "/arpsearch", map[string]interface{}{"mac": m.Mac, "src_sw_ip": ip})
+					if err != nil {
+						logWarning(fmt.Sprintf("[ARP] failed to get %s", m.Mac))
+						pInfo.ARP.Error += err.Error() + "\n"
+					} else {
+						mapstructure.Decode(resp["data"], &arpTmp)
+						// append to global arp
+						pInfo.ARP.Entries = append(pInfo.ARP.Entries, arpTmp...)
+					}
+				}
+				// remove duplicate entries from global arp table
+				arpTmp = pInfo.ARP.Entries
+				pInfo.ARP.Entries = nil
+				for _, a := range arpTmp {
+					dup := false
+					for _, u := range pInfo.ARP.Entries {
+						if u == a {
+							dup = true
+							break
+						}
+					}
+					if !dup {
+						pInfo.ARP.Entries = append(pInfo.ARP.Entries, a)
+					}
+				}
+			} // end arp
 
-		res += fmtObj(arpTable, "arp.tmpl")
+		} // end access ports
 
-	END:
-	}
+	} // end full style
+
+	logDebug(fmt.Sprintf("[portSummary] pInfo: %+v", pInfo))
+	res = fmtObj(pInfo, "port.tmpl")
 	res += printUpdated()
-
+	// clear previous errors (escalated to template)
+	err = nil
 	return res, err
 }
 
@@ -1009,7 +1058,7 @@ func swHandler(ip string, port string, args string) (string, tgbotapi.InlineKeyb
 	// get port summary
 	p, err := portSummary(ip, port, pView[idx])
 	if err != nil {
-		return p, kb
+		return fmtErr(err.Error()), kb
 	}
 	res += p
 	kb = genKeyboard([][]map[string]string{
