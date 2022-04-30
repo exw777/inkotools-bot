@@ -28,6 +28,7 @@ const CFGFILE string = "config.yml"
 // Config struct
 type Config struct {
 	BotToken      string          `yaml:"bot_token"`
+	UseWebhook    bool            `yaml:"use_webhook"`
 	WebhookURL    string          `yaml:"webhook_url"`
 	ListenPort    string          `yaml:"listen_port"`
 	ReportChannel int64           `yaml:"report_channel"`
@@ -454,6 +455,7 @@ func printUpdated() string {
 
 // init telegram bot
 func initBot() tgbotapi.UpdatesChannel {
+	var updates tgbotapi.UpdatesChannel
 	var err error
 	Bot, err = tgbotapi.NewBotAPI(CFG.BotToken)
 	if err != nil {
@@ -465,20 +467,34 @@ func initBot() tgbotapi.UpdatesChannel {
 	whInfo, _ := Bot.GetWebhookInfo()
 	logDebug(fmt.Sprintf("[init] Got webhook info: %v", whInfo.URL))
 	// check webhook is set
-	if whInfo.URL != CFG.WebhookURL+Bot.Token {
-		logDebug(fmt.Sprintf("[init] New webhook: %s", CFG.WebhookURL+Bot.Token))
+	if CFG.UseWebhook && whInfo.URL != CFG.WebhookURL+Bot.Token {
 		wh, _ := tgbotapi.NewWebhook(CFG.WebhookURL + Bot.Token)
 		_, err := Bot.Request(wh)
 		if err != nil {
 			log.Panic(err)
 		}
+		logDebug(fmt.Sprintf("[init] New webhook: %s", CFG.WebhookURL+Bot.Token))
+	} else if !CFG.UseWebhook && whInfo.URL != "" {
+		_, err = Bot.Request(tgbotapi.DeleteWebhookConfig{})
+		if err != nil {
+			log.Panic(err)
+		}
+		logDebug("[init] Webhook deleted")
 	}
 	// init pingers
 	Pingers = make(map[int64]ping.Pinger)
-	// serve http
-	go http.ListenAndServe(":"+CFG.ListenPort, nil)
-	updates := Bot.ListenForWebhook("/" + Bot.Token)
-	logInfo(fmt.Sprintf("[init] Listening on port %s", CFG.ListenPort))
+	if CFG.UseWebhook {
+		// serve http
+		go http.ListenAndServe(":"+CFG.ListenPort, nil)
+		updates = Bot.ListenForWebhook("/" + Bot.Token)
+		logInfo(fmt.Sprintf("[init] Listening on port %s", CFG.ListenPort))
+	} else {
+		// start polling
+		updateConfig := tgbotapi.NewUpdate(0)
+		updateConfig.Timeout = 30
+		updates = Bot.GetUpdatesChan(updateConfig)
+		logInfo("[init] Start polling")
+	}
 	return updates
 }
 
