@@ -111,6 +111,13 @@ type Port struct {
 	Autodowngrade bool   `mapstructure:"autodowngrade"`
 	Description   string `mapstructure:"desc"`
 	Cable         []Pair `mapstructure:"cable"`
+	DDM           struct {
+		Temperature float32 `mapstructure:"temperature"`
+		Voltage     float32 `mapstructure:"voltage"`
+		BiasCurrent float32 `mapstructure:"bias_current"`
+		PowerTX     float32 `mapstructure:"tx_power"`
+		PowerRX     float32 `mapstructure:"rx_power"`
+	} `mapstructure:"ddm"`
 }
 
 // Pair type - pair in cable

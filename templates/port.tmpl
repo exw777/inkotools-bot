@@ -20,6 +20,18 @@
 {{- end }}
 {{- if .Description }}
 <i>Description: </i><code>{{ .Description }}</code>{{ end }}
+{{- if .DDM }}{{ with .DDM }}
+{{- if .Temperature }}
+<i>Temperature: </i><code>{{ .Temperature }}</code>{{ end }}
+{{- if .Voltage }}
+<i>Voltage: </i><code>{{ .Voltage }}</code>{{ end }}
+{{- if .BiasCurrent }}
+<i>Bias Current: </i><code>{{ .BiasCurrent }}</code>{{ end }}
+{{- if .PowerTX }}
+<i>TX Power: </i><code>{{ .PowerTX }}</code>{{ end }}
+{{- if .PowerRX }}
+<i>RX Power: </i><code>{{ .PowerRX }}</code>{{ end }}
+{{- end }}{{ end }}
 {{- if not .Learning }}
 <i>MAC learning: </i><code>disabled</code>&#8252;{{ end }}
 {{- if .Autodowngrade }}
