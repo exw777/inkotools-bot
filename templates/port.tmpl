@@ -159,9 +159,9 @@
 {{ end }}
 
 {{- template "port" .Slots }}
-{{- template "bandwidth" .Bandwidth }}
 {{- template "counters" .Counters }}
 {{- if eq .Style "full" }}
+{{- template "bandwidth" .Bandwidth }}
 {{- template "vlan" .VLAN }}
 {{- template "acl" .ACL }}
 {{- template "mcast" .Multicast }}

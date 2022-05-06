@@ -808,12 +808,6 @@ func portSummary(ip string, port string, style string) (string, error) {
 		}
 	}
 
-	// get port bandwidth
-	resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/bandwidth", ip, port))
-	if err == nil {
-		mapstructure.Decode(resp["data"], &pInfo.Bandwidth)
-	}
-
 	// get port counters
 	resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/counters", ip, port))
 	if err != nil {
@@ -824,6 +818,12 @@ func portSummary(ip string, port string, style string) (string, error) {
 
 	// all other data for full style
 	if style == "full" {
+
+		// get port bandwidth
+		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/bandwidth", ip, port))
+		if err == nil {
+			mapstructure.Decode(resp["data"], &pInfo.Bandwidth)
+		}
 
 		// get list of access ports
 		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/", ip))
