@@ -6,10 +6,10 @@
 <i>{{ .Company }}</i>
 {{- end }}
 {{- range .Contacts }}
-&#128222; <code>{{ . }}</code>
+&#128222; <a href="tel:{{ . }}">{{ . }}</a>
 {{- end }}
 {{- if .Street }}
-&#127968; <code>{{ .Street }} {{ .House }}{{ if .Room }} - {{ .Room }}{{ end }}</code>
+&#127968; <a href="https://yandex.ru/maps/?text=Коломна {{ .Street }} {{ .House }}">{{ .Street }} {{ .House }}{{ if .Room }} - {{ .Room }}{{ end }}</a>
 {{- end }}
 {{- if .Office }}
 &#127970; <code>{{ .Office }}</code>
