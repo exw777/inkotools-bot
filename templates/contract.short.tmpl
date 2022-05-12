@@ -6,13 +6,22 @@
 <i>{{ .Company }}</i>
 {{- end }}
 {{- range .Contacts }}
-&#128222; <a href="tel:{{ . }}">{{ . }}</a>
+&#128222; <a href="tel:{{ fmtPhone . }}">{{ fmtPhone . }}</a>
 {{- end }}
 {{- if .Street }}
-&#127968; <a href="https://yandex.ru/maps/?text=Коломна {{ .Street }} {{ .House }}">{{ .Street }} {{ .House }}{{ if .Room }} - {{ .Room }}{{ end }}</a>
+&#127968; <code>{{ .Street }} {{ .House }}{{ if .Room }} - {{ .Room }}{{ end }}</code>
 {{- end }}
 {{- if .Office }}
 &#127970; <code>{{ .Office }}</code>
+{{- end }}
+{{- if or .Street .Company }}
+<a href="https://yandex.ru/maps/?text=г. Коломна
+{{- if .Street }}, ул. {{ .Street }}{{ end -}}
+{{- if .House }}, д. {{ .House }}{{ end -}}
+{{- if .Room }}, кв. {{ .Room }}{{ end -}}
+{{- if .Office }}, офис {{ .Office }}{{ end -}}
+{{- if .Company }}, {{ .Company }}{{ end -}}
+">[View on map]</a>
 {{- end }}
 {{- if .SwitchIP }}
 <i>Switch: </i><code>{{ .SwitchIP }} {{ .Port }}</code>

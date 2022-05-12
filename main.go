@@ -430,6 +430,27 @@ func fmtRTT(d time.Duration) string {
 	return d.Round(scale / 100).String()
 }
 
+// format phone number
+func fmtPhone(s string) string {
+	reNonDigit, _ := regexp.Compile(`\D`)
+	reLocal, _ := regexp.Compile(`^6\d{6}$`)
+	reMobile, _ := regexp.Compile(`^(?:[78]?)(\d{3})(\d{3})(\d{2})(\d{2})$`)
+	// remove non-digit symbols
+	res := reNonDigit.ReplaceAllString(s, "")
+	// convert local number
+	if reLocal.MatchString(res) {
+		res = "8496" + res
+	}
+	// format as 8 (xxx) xxx-xx-xx
+	m := reMobile.FindStringSubmatch(res)
+	if len(m) > 1 {
+		res = fmt.Sprintf("8 (%s) %s-%s-%s", m[1], m[2], m[3], m[4])
+		return res
+	}
+	// return raw if no matches
+	return s
+}
+
 // debug log
 func logDebug(msg string) {
 	if CFG.DebugMode {
@@ -528,6 +549,7 @@ func loadConfig() error {
 			}
 			return "disabled"
 		},
+		"fmtPhone": fmtPhone,
 	}
 	// load templates
 	TPL, err = template.New("templates").Funcs(funcMap).ParseGlob("templates/*")
