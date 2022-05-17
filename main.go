@@ -41,8 +41,10 @@ type Config struct {
 
 // User struct
 type User struct {
-	Name string `yaml:"name"`
-	Mode string `yaml:"-"`
+	Name  string `yaml:"name"`
+	Mode  string `yaml:"-"`
+	Token string `yaml:"token"`
+	TMP   string `yaml:"-"` // to save permanent data between messages
 }
 
 // CFG - config object
@@ -1325,6 +1327,72 @@ func pingHandler(msg string, uid int64) string {
 	return res
 }
 
+// config mode handler
+func configHandler(msg string, uid int64, msgID int) (string, tgbotapi.InlineKeyboardMarkup) {
+	var res string
+	var kb tgbotapi.InlineKeyboardMarkup
+	switch msg {
+	case "login":
+		res = "Enter login:"
+		CFG.Users[uid].TMP = "login"
+	default:
+		if CFG.Users[uid].TMP == "login" { // user entered login
+			res = "Enter password:"
+			CFG.Users[uid].TMP = fmt.Sprintf("%s\npass", msg)
+		} else if strings.HasSuffix(CFG.Users[uid].TMP, "\npass") { // user entered password
+			CFG.Users[uid].TMP = strings.TrimSuffix(CFG.Users[uid].TMP, "\npass") + "\n" + msg
+			creds := strings.Split(CFG.Users[uid].TMP, "\n")
+			// clear permanent storage
+			CFG.Users[uid].TMP = ""
+			// remove user message with password for privacy
+			Bot.Request(tgbotapi.NewDeleteMessage(uid, msgID))
+			// try to get gray database token from api
+			resp, err := requestAPI("POST", "/gdb/user/get_token",
+				map[string]interface{}{"login": creds[0], "password": creds[1]})
+			if err != nil {
+				res = fmtErr(err.Error())
+				kb = genKeyboard([][]map[string]string{{{"try again": "config edit login"}}})
+			} else {
+				mapstructure.Decode(resp["data"].(map[string]interface{})["token"], &CFG.Users[uid].Token)
+				saveConfig()
+				res, kb = printConfig(uid)
+			}
+
+		} else {
+			res, kb = printConfig(uid)
+		}
+	}
+	return res, kb
+}
+
+// print user config
+func printConfig(uid int64) (string, tgbotapi.InlineKeyboardMarkup) {
+	var res, usr string
+	var kb tgbotapi.InlineKeyboardMarkup
+	if CFG.Users[uid].Token == "" {
+		res = "You are not authorized in gray database."
+		kb = genKeyboard([][]map[string]string{{{"login": "config edit login"}}})
+	} else {
+		// get username from api
+		resp, err := requestAPI("GET", "/gdb/user", map[string]interface{}{"token": CFG.Users[uid].Token})
+		if err != nil {
+			usr = err.Error()
+		} else {
+			mapstructure.Decode(resp["data"].(map[string]interface{})["username"], &usr)
+		}
+		res = fmt.Sprintf("<b>Logged as: </b><code>%s</code>", usr)
+		kb = genKeyboard([][]map[string]string{
+			{
+				{"edit credentials": "config send login"},
+			},
+			{
+				{"back to raw": "raw edit"},
+			},
+		})
+	}
+	return res, kb
+}
+
 // MAIN APP
 func main() {
 	loadConfig()
@@ -1377,9 +1445,9 @@ func main() {
 					res = fmtErr("You have no permissions to work in this mode.")
 					goto SEND
 				}
-			case "raw", "report", "search", "ping", "calc":
+			case "raw", "report", "search", "ping", "calc", "config":
 				CFG.Users[uid].Mode = cmd
-				// no command
+			// no command
 			case "":
 				// skip
 			// wrong command
@@ -1415,6 +1483,8 @@ func main() {
 				res = pingHandler(msg, uid)
 			case "calc":
 				res = calcHandler(msg)
+			case "config":
+				res, kb = configHandler(msg, uid, u.Message.MessageID)
 			default: // default is raw mode
 				res, kb = rawHandler(msg)
 			}
@@ -1461,6 +1531,8 @@ func main() {
 				kw, p := splitLast(rawCmd)
 				page, _ := strconv.Atoi(p)
 				res, kb = searchHandler(kw, page)
+			case "config":
+				res, kb = configHandler(rawCmd, uid, 0)
 			default:
 				logWarning(fmt.Sprintf("[callback] wrong mode: %s", mode))
 				goto CALLBACK
