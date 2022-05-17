@@ -678,6 +678,12 @@ func editKeyboard(m *tgbotapi.Message, kb tgbotapi.InlineKeyboardMarkup) error {
 	return editMessage(m, "", kb, true)
 }
 
+// shortcut for edit text and remove inline keyboard
+func editTextRemoveKeyboard(m *tgbotapi.Message, txt string) error {
+	empty := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
+	return editMessage(m, txt, empty, true)
+}
+
 // shortcut for edit text and keyboard
 func editTextAndKeyboard(m *tgbotapi.Message, txt string, kb tgbotapi.InlineKeyboardMarkup) error {
 	return editMessage(m, txt, kb, true)
@@ -1417,7 +1423,7 @@ func main() {
 				if len(kb.InlineKeyboard) > 0 {
 					editTextAndKeyboard(&tmpMsg, res, kb)
 				} else {
-					editText(&tmpMsg, res)
+					editTextRemoveKeyboard(&tmpMsg, res)
 				}
 			} else {
 				logWarning("[message] Empty result")
@@ -1466,7 +1472,7 @@ func main() {
 			if len(kb.InlineKeyboard) > 0 {
 				editTextAndKeyboard(msg, res, kb)
 			} else {
-				editText(msg, res)
+				editTextRemoveKeyboard(msg, res)
 			}
 		CALLBACK:
 			Bot.Request(tgbotapi.NewCallback(u.CallbackQuery.ID, "Done"))
