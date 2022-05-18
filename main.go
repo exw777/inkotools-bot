@@ -41,10 +41,11 @@ type Config struct {
 
 // User struct
 type User struct {
-	Name  string `yaml:"name"`
-	Mode  string `yaml:"-"`
-	Token string `yaml:"token"`
-	TMP   string `yaml:"-"` // to save permanent data between messages
+	Name    string   `yaml:"name"`
+	Mode    string   `yaml:"-"`
+	Token   string   `yaml:"token"`
+	TMP     string   `yaml:"-"` // to save permanent data between messages
+	Tickets []Ticket `yaml:"-"`
 }
 
 // CFG - config object
@@ -260,6 +261,19 @@ type InetAccount struct {
 type TelAccount struct {
 	BillingAccount `mapstructure:",squash"`
 	Numbers        []string `mapstructure:"number_list"`
+}
+
+// Ticket type
+type Ticket struct {
+	TicketID   int       `mapstructure:"ticket_id"`
+	ContractID string    `mapstructure:"contract_id"`
+	Name       string    `mapstructure:"name"`
+	Issue      string    `mapstructure:"issue"`
+	Address    string    `mapstructure:"address"`
+	Contacts   []string  `mapstructure:"contacts"`
+	Date       time.Time `mapstructure:"date"`
+	CreatedBy  string    `mapstructure:"created_by"`
+	Status     string    `mapstructure:"status"`
 }
 
 // ColorReset - ANSI color
@@ -664,6 +678,28 @@ func genKeyboard(matrix [][]map[string]string) tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.InlineKeyboardMarkup{
 		InlineKeyboard: kb,
 	}
+}
+
+// generate pagination keyboard row
+func rowPagination(cmd string, page int, total int) [][]map[string]string {
+	buttons := [][]map[string]string{{}}
+	if page > 1 {
+		if page > 2 {
+			// first page
+			buttons[0] = append(buttons[0], map[string]string{"<<": fmt.Sprintf("%s %d", cmd, 1)})
+		}
+		// previous page
+		buttons[0] = append(buttons[0], map[string]string{"<": fmt.Sprintf("%s %d", cmd, page-1)})
+	}
+	if page < total {
+		// next page
+		buttons[0] = append(buttons[0], map[string]string{">": fmt.Sprintf("%s %d", cmd, page+1)})
+		if page < total-1 {
+			// last page
+			buttons[0] = append(buttons[0], map[string]string{">>": fmt.Sprintf("%s %d", cmd, total)})
+		}
+	}
+	return buttons
 }
 
 // shortcut for edit only text
@@ -1216,25 +1252,7 @@ func searchHandler(kw string, page int) (string, tgbotapi.InlineKeyboardMarkup) 
 			res = fmtObj(result, "search.tmpl")
 			// callback pagination
 			if result.Meta.Pages.Total > 1 {
-				// make empty buttons row
-				buttons := [][]map[string]string{{}}
-				if page > 1 {
-					if page > 2 {
-						// first page
-						buttons[0] = append(buttons[0], map[string]string{"<<": fmt.Sprintf("search edit %s %d", kw, 1)})
-					}
-					// previous page
-					buttons[0] = append(buttons[0], map[string]string{"<": fmt.Sprintf("search edit %s %d", kw, page-1)})
-				}
-				if page < result.Meta.Pages.Total {
-					// next page
-					buttons[0] = append(buttons[0], map[string]string{">": fmt.Sprintf("search edit %s %d", kw, page+1)})
-					if page < result.Meta.Pages.Total-1 {
-						// last page
-						buttons[0] = append(buttons[0], map[string]string{">>": fmt.Sprintf("search edit %s %d", kw, result.Meta.Pages.Total)})
-					}
-				}
-				kb = genKeyboard(buttons)
+				kb = genKeyboard(rowPagination(fmt.Sprintf("search edit %s", kw), page, result.Meta.Pages.Total))
 			}
 		}
 	}
@@ -1365,31 +1383,104 @@ func configHandler(msg string, uid int64, msgID int) (string, tgbotapi.InlineKey
 	return res, kb
 }
 
+// print unauthorized message
+func printLogin() (string, tgbotapi.InlineKeyboardMarkup) {
+	res := "You are not authorized in gray database."
+	kb := genKeyboard([][]map[string]string{{{"login": "config edit login"}}})
+	return res, kb
+}
+
 // print user config
 func printConfig(uid int64) (string, tgbotapi.InlineKeyboardMarkup) {
 	var res, usr string
 	var kb tgbotapi.InlineKeyboardMarkup
 	if CFG.Users[uid].Token == "" {
-		res = "You are not authorized in gray database."
-		kb = genKeyboard([][]map[string]string{{{"login": "config edit login"}}})
-	} else {
-		// get username from api
-		resp, err := requestAPI("GET", "/gdb/user", map[string]interface{}{"token": CFG.Users[uid].Token})
-		if err != nil {
-			usr = err.Error()
-		} else {
-			mapstructure.Decode(resp["data"].(map[string]interface{})["username"], &usr)
-		}
-		res = fmt.Sprintf("<b>Logged as: </b><code>%s</code>", usr)
-		kb = genKeyboard([][]map[string]string{
-			{
-				{"edit credentials": "config send login"},
-			},
-			{
-				{"back to raw": "raw edit"},
-			},
-		})
+		return printLogin()
 	}
+	// get username from api
+	resp, err := requestAPI("GET", "/gdb/user", map[string]interface{}{"token": CFG.Users[uid].Token})
+	if err != nil {
+		usr = err.Error()
+	} else {
+		mapstructure.Decode(resp["data"].(map[string]interface{})["username"], &usr)
+	}
+	res = fmt.Sprintf("<b>Logged as: </b><code>%s</code>", usr)
+	kb = genKeyboard([][]map[string]string{
+		{
+			{"edit credentials": "config send login"},
+		},
+		{
+			{"back to raw": "raw edit"},
+		},
+	})
+	return res, kb
+}
+
+// get list of gray database tickets
+func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarkup) {
+	var res string
+	var kb tgbotapi.InlineKeyboardMarkup
+	var page int
+	var style, template, kbBtn string
+	if CFG.Users[uid].Token == "" {
+		return printLogin()
+	}
+	// update tickets cache on refresh and first run
+	if strings.Contains(cmd, "refresh") || cmd == "" {
+		resp, err := requestAPI("POST", "/gdb/tickets", map[string]interface{}{"token": CFG.Users[uid].Token})
+		if err != nil {
+			return fmtErr(err.Error()), kb
+		}
+		// use custom decoder to parse date
+		config := mapstructure.DecoderConfig{
+			DecodeHook: mapstructure.StringToTimeHookFunc("2006-01-02"),
+			Result:     &CFG.Users[uid].Tickets,
+		}
+		decoder, _ := mapstructure.NewDecoder(&config)
+		decoder.Decode(resp["data"])
+	}
+	// set style
+	if strings.Contains(cmd, "full") {
+		style = "full"
+		template = "ticket.tmpl"
+		kbBtn = "short"
+	} else {
+		style = "short"
+		template = "ticket.short.tmpl"
+		kbBtn = "full"
+	}
+	// set page
+	if c, p, hasPage := strings.Cut(cmd, " page "); hasPage {
+		cmd = c
+		page, _ = strconv.Atoi(p)
+	} else {
+		page = 1
+	}
+	total := len(CFG.Users[uid].Tickets)
+	// common buttons
+	buttons := [][]map[string]string{{
+		// {kbBtn: fmt.Sprintf("tickets edit %s page %d", kbBtn, page)},
+		{"refresh": fmt.Sprintf("tickets edit refresh %s page %d", style, page)},
+	}}
+	// display current ticket
+	if total == 0 {
+		res = "You have no tickets"
+	} else {
+		ticket := CFG.Users[uid].Tickets[page-1]
+		res = fmtObj(ticket, template)
+		res += fmt.Sprintf("\nTicket: <b>%d/%d</b>", page, total)
+		// add full/short button and client info
+		buttons[0] = append(buttons[0], []map[string]string{
+			{kbBtn: fmt.Sprintf("tickets edit %s page %d", kbBtn, page)},
+			{"client info": fmt.Sprintf("raw send %s", ticket.ContractID)},
+		}...)
+		// callback pagination
+		if total > 1 {
+			pagination := rowPagination(fmt.Sprintf("tickets edit %s page", style), page, total)
+			buttons = append(pagination, buttons...)
+		}
+	}
+	kb = genKeyboard(buttons)
 	return res, kb
 }
 
@@ -1447,6 +1538,9 @@ func main() {
 				}
 			case "raw", "report", "search", "ping", "calc", "config":
 				CFG.Users[uid].Mode = cmd
+			case "tickets":
+				res, kb = ticketsHandler(cmdArgs, uid)
+				goto SEND
 			// no command
 			case "":
 				// skip
@@ -1533,6 +1627,8 @@ func main() {
 				res, kb = searchHandler(kw, page)
 			case "config":
 				res, kb = configHandler(rawCmd, uid, 0)
+			case "tickets":
+				res, kb = ticketsHandler(rawCmd, uid)
 			default:
 				logWarning(fmt.Sprintf("[callback] wrong mode: %s", mode))
 				goto CALLBACK
