@@ -446,7 +446,7 @@ func fmtPhone(s string) string {
 	// format as 8 (xxx) xxx-xx-xx
 	m := reMobile.FindStringSubmatch(res)
 	if len(m) > 1 {
-		res = fmt.Sprintf("8 (%s) %s-%s-%s", m[1], m[2], m[3], m[4])
+		res = fmt.Sprintf("8(%s)%s-%s-%s", m[1], m[2], m[3], m[4])
 		return res
 	}
 	// return raw if no matches
