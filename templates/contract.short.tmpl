@@ -15,7 +15,8 @@
 &#127970; <code>{{ .Office }}</code>
 {{- end }}
 {{- if or .Street .Company }}
-<a href="https://yandex.ru/maps/?text=г. Коломна
+<a href="https://yandex.ru/maps/?text=Московская область
+{{- if .City }}, г. {{ .City }}{{ end -}}
 {{- if .Street }}, ул. {{ .Street }}{{ end -}}
 {{- if .House }}, д. {{ .House }}{{ end -}}
 {{- if .Room }}, кв. {{ .Room }}{{ end -}}

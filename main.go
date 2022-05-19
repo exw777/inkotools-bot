@@ -224,6 +224,7 @@ type Contract struct {
 	Terminated bool     `mapstructure:"terminated"`
 	Name       string   `mapstructure:"name"`
 	Contacts   []string `mapstructure:"contact_list"`
+	City       string   `mapstructure:"city"`
 	Street     string   `mapstructure:"street"`
 	House      string   `mapstructure:"house"`
 	Room       string   `mapstructure:"room"`
