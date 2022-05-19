@@ -1,4 +1,6 @@
 {{- template "ticket.short.tmpl" . -}}
-<a href="https://yandex.ru/maps/?text={{ .Address }}">[View on map]</a>
+{{- if .Status }}
 
 <pre>{{ .Status }}</pre>
+
+{{- end }}

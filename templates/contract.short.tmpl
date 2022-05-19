@@ -8,15 +8,19 @@
 {{- range .Contacts }}
 &#128222; <a href="tel:{{ fmtPhone . }}">{{ fmtPhone . }}</a>
 {{- end }}
-{{- if .Street }}
-&#127968; <code>{{ .Street }} {{ .House }}{{ if .Room }} - {{ .Room }}{{ end }}</code>
+{{- if or .City .Street }}
+&#127968; <code>{{ if ne .City "Коломна" }}{{ .City }}, {{ end -}}
+{{- if .Street }}{{ .Street }} {{ end -}}
+{{- .House }}{{ if .Room }} - {{ .Room }}{{ end }}</code>
 {{- end }}
 {{- if .Office }}
 &#127970; <code>{{ .Office }}</code>
 {{- end }}
-{{- if or .Street .Company }}
+{{- if or .City .Street .Company }}
 <a href="https://yandex.ru/maps/?text=Московская область
-{{- if .City }}, г. {{ .City }}{{ end -}}
+{{- if .City -}}
+{{- if eq .City "Сосновый бор" }}, д. Негомож, городок 
+{{- else }}, г. {{ end }}{{ .City }}{{ end -}}
 {{- if .Street }}, ул. {{ .Street }}{{ end -}}
 {{- if .House }}, д. {{ .House }}{{ end -}}
 {{- if .Room }}, кв. {{ .Room }}{{ end -}}
