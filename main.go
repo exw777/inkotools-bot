@@ -567,6 +567,7 @@ func loadConfig() error {
 			return "disabled"
 		},
 		"fmtPhone": fmtPhone,
+		"inc":      func(x int) int { return x + 1 },
 	}
 	// load templates
 	TPL, err = template.New("templates").Funcs(funcMap).ParseGlob("templates/*")
@@ -683,6 +684,7 @@ func genKeyboard(matrix [][]map[string]string) tgbotapi.InlineKeyboardMarkup {
 
 // generate pagination keyboard row
 func rowPagination(cmd string, page int, total int) [][]map[string]string {
+	// make matrix with empty row
 	buttons := [][]map[string]string{{}}
 	if page > 1 {
 		if page > 2 {
@@ -1417,38 +1419,56 @@ func printConfig(uid int64) (string, tgbotapi.InlineKeyboardMarkup) {
 	return res, kb
 }
 
+// update user tickets cache
+func updateTickets(uid int64) error {
+	// clear cache before update
+	CFG.Users[uid].Tickets = nil
+	resp, err := requestAPI("POST", "/gdb/tickets", map[string]interface{}{"token": CFG.Users[uid].Token})
+	if err != nil {
+		return err
+	}
+	// use custom decoder to parse date
+	config := mapstructure.DecoderConfig{
+		DecodeHook: mapstructure.StringToTimeHookFunc("2006-01-02"),
+		Result:     &CFG.Users[uid].Tickets,
+	}
+	decoder, _ := mapstructure.NewDecoder(&config)
+	decoder.Decode(resp["data"])
+	logDebug(fmt.Sprintf("Updated tickets: %+v", CFG.Users[uid].Tickets))
+	return nil
+}
+
 // get list of gray database tickets
 func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarkup) {
 	var res string
 	var kb tgbotapi.InlineKeyboardMarkup
 	var page int
-	var style, template, kbBtn string
+	var style, template, caption, newStyle string
 	if CFG.Users[uid].Token == "" {
 		return printLogin()
 	}
 	// update tickets cache on refresh and first run
 	if strings.Contains(cmd, "refresh") || cmd == "" {
-		resp, err := requestAPI("POST", "/gdb/tickets", map[string]interface{}{"token": CFG.Users[uid].Token})
-		if err != nil {
+		if err := updateTickets(uid); err != nil {
 			return fmtErr(err.Error()), kb
 		}
-		// use custom decoder to parse date
-		config := mapstructure.DecoderConfig{
-			DecodeHook: mapstructure.StringToTimeHookFunc("2006-01-02"),
-			Result:     &CFG.Users[uid].Tickets,
-		}
-		decoder, _ := mapstructure.NewDecoder(&config)
-		decoder.Decode(resp["data"])
 	}
 	// set style
 	if strings.Contains(cmd, "full") {
 		style = "full"
 		template = "ticket.tmpl"
-		kbBtn = "short"
-	} else {
+		caption = "hide comments"
+		newStyle = "short"
+	} else if strings.Contains(cmd, "short") {
 		style = "short"
 		template = "ticket.short.tmpl"
-		kbBtn = "full"
+		caption = "show comments"
+		newStyle = "full"
+	} else {
+		style = "list"
+		template = "ticket.list.tmpl"
+		caption = "details"
+		newStyle = "short"
 	}
 	// set page
 	if c, p, hasPage := strings.Cut(cmd, " page "); hasPage {
@@ -1460,25 +1480,46 @@ func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarku
 	total := len(CFG.Users[uid].Tickets)
 	// common buttons
 	buttons := [][]map[string]string{{
-		// {kbBtn: fmt.Sprintf("tickets edit %s page %d", kbBtn, page)},
 		{"refresh": fmt.Sprintf("tickets edit refresh %s page %d", style, page)},
 	}}
 	// display current ticket
 	if total == 0 {
 		res = "You have no tickets"
 	} else {
-		ticket := CFG.Users[uid].Tickets[page-1]
-		res = fmtObj(ticket, template)
-		res += fmt.Sprintf("\nTicket: <b>%d/%d</b>", page, total)
-		// add full/short button and client info
+		// add full/short/more button
 		buttons[0] = append(buttons[0], []map[string]string{
-			{kbBtn: fmt.Sprintf("tickets edit %s page %d", kbBtn, page)},
-			{"client info": fmt.Sprintf("raw send %s", ticket.ContractID)},
+			{caption: fmt.Sprintf("tickets edit %s page %d", newStyle, page)},
 		}...)
-		// callback pagination
-		if total > 1 {
-			pagination := rowPagination(fmt.Sprintf("tickets edit %s page", style), page, total)
-			buttons = append(pagination, buttons...)
+		if style == "list" {
+			res = fmtObj(CFG.Users[uid].Tickets, template)
+			// add buttons to contracts
+			var row []map[string]string
+			for i := 1; i <= total; i++ {
+				row = append(row, map[string]string{strconv.Itoa(i): fmt.Sprintf("raw send %s", CFG.Users[uid].Tickets[i-1].ContractID)})
+				// 8 buttons per row
+				if len(row) == 8 {
+					buttons = append(buttons, row)
+					row = nil
+				}
+			}
+			// add last row
+			if len(row) > 0 {
+				buttons = append(buttons, row)
+			}
+		} else {
+			ticket := CFG.Users[uid].Tickets[page-1]
+			res = fmtObj(ticket, template)
+			res += fmt.Sprintf("\nTicket: <b>%d/%d</b>", page, total)
+			// add row with tickets list and client info buttons
+			buttons = append(buttons, []map[string]string{
+				{"all tickets": "tickets edit list"},
+				{"client info": fmt.Sprintf("raw send %s", ticket.ContractID)},
+			})
+			// callback pagination
+			if total > 1 {
+				pagination := rowPagination(fmt.Sprintf("tickets edit %s page", style), page, total)
+				buttons = append(pagination, buttons...)
+			}
 		}
 	}
 	kb = genKeyboard(buttons)
