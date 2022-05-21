@@ -323,6 +323,8 @@ const HELPUSER string = `
 /search [args] - switch to search mode
 /ping [args] - switch to ping mode
 /calc [args] - switch to ip calc mode
+/config [args] - switch to config mode
+/tickets - show tickets from gray database
 
 <code>args</code> - optional commands, which can be executed immediately, like you are already in this mode.
 
@@ -358,6 +360,9 @@ Only one host at time. If you send a new host, previous pinger will be stopped.
 <b>IP calc mode</b>
 In this mode you can get client ip address summary (ip, mask, gateway, prefix)
 
+<b>Config mode</b>
+In this mode you can change user settings, e.g. database credentials.
+
 `
 
 // HELPADMIN - help string for admin
@@ -369,6 +374,42 @@ const HELPADMIN string = `
 <code>broadcast TEXT</code> - send broadcast message <b><i>TEXT</i></b> 
 <code>reload</code> - reload configuration from file
 `
+
+// BotCommands const
+var BotCommands = []tgbotapi.BotCommand{
+	{
+		Command:     "tickets",
+		Description: "show gray database tickets",
+	},
+	{
+		Command:     "raw",
+		Description: "switch to raw command mode (default)",
+	},
+	{
+		Command:     "search",
+		Description: "switch to search mode",
+	},
+	{
+		Command:     "ping",
+		Description: "switch to ping mode",
+	},
+	{
+		Command:     "calc",
+		Description: "switch to ip calc mode",
+	},
+	{
+		Command:     "config",
+		Description: "switch to config mode",
+	},
+	{
+		Command:     "help",
+		Description: "print help",
+	},
+	{
+		Command:     "report",
+		Description: "switch to feedback mode",
+	},
+}
 
 // HELPER FUNCTIONS
 
@@ -547,6 +588,11 @@ func initBot() tgbotapi.UpdatesChannel {
 			log.Panic(err)
 		}
 		logDebug("[init] Webhook deleted")
+	}
+	// set bot commands
+	_, err = Bot.Request(tgbotapi.NewSetMyCommands(BotCommands...))
+	if err != nil {
+		logError(fmt.Sprintf("[init] Set commands failed: %v", err))
 	}
 	// init pingers
 	Pingers = make(map[int64]ping.Pinger)
