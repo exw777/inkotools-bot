@@ -1,3 +1,8 @@
 {{ range $i, $e := . }}
 <b>{{ inc $i }}</b> [<code>{{ .ContractID }}</code>] {{ .Address }}
-{{ end }}
+{{ .Issue }}
+<i>Created: </i><code>{{ .Created.Format "02.01.2006" }}</code>
+{{- if not .Updated.IsZero }}
+<i>Updated:</i> <code>{{ .Updated.Format "02.01 15:04" }}</code>
+{{- end }}
+{{ end -}}

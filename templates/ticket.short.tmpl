@@ -1,9 +1,0 @@
-[<code>{{ .ContractID }}</code>]
-<b>{{ .Name }}</b>
-
-<pre>{{ .Issue }}</pre>
-{{ range .Contacts }}
-&#128222; <a href="tel:{{ fmtPhone . }}">{{ fmtPhone . }}</a>
-{{- end }}
-
-&#127968; <code>{{ .Address }}</code>

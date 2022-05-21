@@ -41,11 +41,14 @@ type Config struct {
 
 // User struct
 type User struct {
-	Name    string   `yaml:"name"`
-	Mode    string   `yaml:"-"`
-	Token   string   `yaml:"token"`
-	TMP     string   `yaml:"-"` // to save permanent data between messages
-	Tickets []Ticket `yaml:"-"`
+	Name    string `yaml:"name"`
+	Mode    string `yaml:"-"`
+	Token   string `yaml:"token"`
+	TMP     string `yaml:"-"` // to save permanent data between messages
+	Tickets struct {
+		Data    []Ticket
+		Updated time.Time
+	} `yaml:"-"`
 }
 
 // CFG - config object
@@ -240,6 +243,7 @@ type Contract struct {
 		LDTel TelAccount     `mapstructure:"ld_telephony"`
 		TV    BillingAccount `mapstructure:"television"`
 	} `mapstructure:"billing_accounts"`
+	Tickets []Ticket `mapstructure:"tickets`
 }
 
 // BillingAccount type
@@ -266,15 +270,24 @@ type TelAccount struct {
 
 // Ticket type
 type Ticket struct {
-	TicketID   int       `mapstructure:"ticket_id"`
-	ContractID string    `mapstructure:"contract_id"`
-	Name       string    `mapstructure:"name"`
-	Issue      string    `mapstructure:"issue"`
-	Address    string    `mapstructure:"address"`
-	Contacts   []string  `mapstructure:"contacts"`
-	Date       time.Time `mapstructure:"date"`
-	CreatedBy  string    `mapstructure:"created_by"`
-	Status     string    `mapstructure:"status"`
+	TicketID   int             `mapstructure:"ticket_id"`
+	ContractID string          `mapstructure:"contract_id"`
+	Creator    string          `mapstructure:"creator"`
+	Created    time.Time       `mapstructure:"date"`
+	Issue      string          `mapstructure:"issue"`
+	Master     string          `mapstructure:"master"`
+	Comments   []TicketComment `mapstructure:"comments"`
+	Name       string          `mapstructure:"name"`
+	Address    string          `mapstructure:"address"`
+	Contacts   []string        `mapstructure:"contacts"`
+	Updated    time.Time
+}
+
+// TicketComment type
+type TicketComment struct {
+	Time    time.Time `mapstructure:"time"`
+	Author  string    `mapstructure:"author"`
+	Comment string    `mapstructure:"comment"`
 }
 
 // ColorReset - ANSI color
@@ -468,6 +481,16 @@ func fmtPhone(s string) string {
 	return s
 }
 
+// mapstructure decode with custom date format
+func mapstructureDecode(input interface{}, output interface{}) {
+	config := mapstructure.DecoderConfig{
+		DecodeHook: mapstructure.StringToTimeHookFunc(time.RFC3339),
+		Result:     &output,
+	}
+	decoder, _ := mapstructure.NewDecoder(&config)
+	decoder.Decode(input)
+}
+
 // debug log
 func logDebug(msg string) {
 	if CFG.DebugMode {
@@ -491,9 +514,8 @@ func logError(msg string) {
 }
 
 // print timestamp
-func printUpdated() string {
-	t := time.Now().Format("2006-01-02 15:04:05")
-	return fmt.Sprintf("\n<i>Updated:</i> <code>%s</code>", t)
+func printUpdated(t time.Time) string {
+	return fmt.Sprintf("\n<i>Updated:</i> <code>%s</code>", t.Format("2006-01-02 15:04:05"))
 }
 
 // MAIN FUNCTIONS
@@ -1010,7 +1032,7 @@ func portSummary(ip string, port string, style string) (string, error) {
 
 	logDebug(fmt.Sprintf("[portSummary] pInfo: %+v", pInfo))
 	res = fmtObj(pInfo, "port.tmpl")
-	res += printUpdated()
+	res += printUpdated(time.Now())
 	// clear previous errors (escalated to template)
 	err = nil
 	return res, err
@@ -1211,7 +1233,7 @@ func clientHandler(client string, args string) (string, tgbotapi.InlineKeyboardM
 	if err != nil {
 		res = fmtErr(err.Error())
 	} else {
-		mapstructure.Decode(resp["data"], &cData)
+		mapstructureDecode(resp["data"], &cData)
 		res = fmtObj(cData, template)
 		gdbURL := strings.TrimRight(CFG.GraydbURL, "/") + fmt.Sprintf("/index.php?id_aabon=%d", cData.ClientID)
 		kb = tgbotapi.NewInlineKeyboardMarkup(
@@ -1422,19 +1444,20 @@ func printConfig(uid int64) (string, tgbotapi.InlineKeyboardMarkup) {
 // update user tickets cache
 func updateTickets(uid int64) error {
 	// clear cache before update
-	CFG.Users[uid].Tickets = nil
+	CFG.Users[uid].Tickets.Data = nil
 	resp, err := requestAPI("POST", "/gdb/tickets", map[string]interface{}{"token": CFG.Users[uid].Token})
 	if err != nil {
 		return err
 	}
-	// use custom decoder to parse date
-	config := mapstructure.DecoderConfig{
-		DecodeHook: mapstructure.StringToTimeHookFunc("2006-01-02"),
-		Result:     &CFG.Users[uid].Tickets,
+	mapstructureDecode(resp["data"], &CFG.Users[uid].Tickets.Data)
+	for i, e := range CFG.Users[uid].Tickets.Data {
+		c := len(e.Comments)
+		if c > 0 {
+			CFG.Users[uid].Tickets.Data[i].Updated = e.Comments[c-1].Time
+		}
 	}
-	decoder, _ := mapstructure.NewDecoder(&config)
-	decoder.Decode(resp["data"])
-	logDebug(fmt.Sprintf("Updated tickets: %+v", CFG.Users[uid].Tickets))
+	CFG.Users[uid].Tickets.Updated = time.Now()
+	logDebug(fmt.Sprintf("Updated tickets: %+v", CFG.Users[uid].Tickets.Data))
 	return nil
 }
 
@@ -1443,85 +1466,67 @@ func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarku
 	var res string
 	var kb tgbotapi.InlineKeyboardMarkup
 	var page int
-	var style, template, caption, newStyle string
+	var buttons [][]map[string]string
 	if CFG.Users[uid].Token == "" {
 		return printLogin()
 	}
 	// update tickets cache on refresh and first run
-	if strings.Contains(cmd, "refresh") || cmd == "" {
+	if strings.Contains(cmd, "refresh") || cmd == "" || CFG.Users[uid].Tickets.Updated.IsZero() {
 		if err := updateTickets(uid); err != nil {
 			return fmtErr(err.Error()), kb
 		}
 	}
-	// set style
-	if strings.Contains(cmd, "full") {
-		style = "full"
-		template = "ticket.tmpl"
-		caption = "hide comments"
-		newStyle = "short"
-	} else if strings.Contains(cmd, "short") {
-		style = "short"
-		template = "ticket.short.tmpl"
-		caption = "show comments"
-		newStyle = "full"
-	} else {
-		style = "list"
-		template = "ticket.list.tmpl"
-		caption = "details"
-		newStyle = "short"
-	}
-	// set page
-	if c, p, hasPage := strings.Cut(cmd, " page "); hasPage {
-		cmd = c
-		page, _ = strconv.Atoi(p)
-	} else {
-		page = 1
-	}
-	total := len(CFG.Users[uid].Tickets)
-	// common buttons
-	buttons := [][]map[string]string{{
-		{"refresh": fmt.Sprintf("tickets edit refresh %s page %d", style, page)},
-	}}
-	// display current ticket
+	tickets := CFG.Users[uid].Tickets.Data
+	total := len(tickets)
 	if total == 0 {
 		res = "You have no tickets"
 	} else {
-		// add full/short/more button
-		buttons[0] = append(buttons[0], []map[string]string{
-			{caption: fmt.Sprintf("tickets edit %s page %d", newStyle, page)},
-		}...)
-		if style == "list" {
-			res = fmtObj(CFG.Users[uid].Tickets, template)
-			// add buttons to contracts
+		if strings.Contains(cmd, "details") {
+			_, p := splitLast(cmd)
+			page, _ = strconv.Atoi(p)
+			// replace invalid page numbers by first or last page
+			if page < 1 {
+				page = 1
+			}
+			if page > total {
+				page = total
+			}
+			// get current ticket
+			ticket := tickets[page-1]
+			res = fmtObj(ticket, "ticket.tmpl")
+			res += fmt.Sprintf("\nTicket: <b>%d/%d</b>", page, total)
+			// pagination row
+			if total > 1 {
+				buttons = append(buttons, rowPagination("tickets edit details", page, total)...)
+			}
+			// other buttons rows
+			buttons = append(buttons, []map[string]string{
+				{"all tickets": "tickets edit list"},
+				{"client info": fmt.Sprintf("raw send %s", ticket.ContractID)},
+			})
+		} else {
+			res = fmtObj(tickets, "ticket.list.tmpl")
+			// generate index buttons
 			var row []map[string]string
 			for i := 1; i <= total; i++ {
-				row = append(row, map[string]string{strconv.Itoa(i): fmt.Sprintf("raw send %s", CFG.Users[uid].Tickets[i-1].ContractID)})
+				row = append(row, map[string]string{strconv.Itoa(i): fmt.Sprintf("tickets edit details %d", i)})
 				// 8 buttons per row
 				if len(row) == 8 {
 					buttons = append(buttons, row)
 					row = nil
 				}
 			}
-			// add last row
+			// add last row (< 8 buttons)
 			if len(row) > 0 {
 				buttons = append(buttons, row)
 			}
-		} else {
-			ticket := CFG.Users[uid].Tickets[page-1]
-			res = fmtObj(ticket, template)
-			res += fmt.Sprintf("\nTicket: <b>%d/%d</b>", page, total)
-			// add row with tickets list and client info buttons
-			buttons = append(buttons, []map[string]string{
-				{"all tickets": "tickets edit list"},
-				{"client info": fmt.Sprintf("raw send %s", ticket.ContractID)},
-			})
-			// callback pagination
-			if total > 1 {
-				pagination := rowPagination(fmt.Sprintf("tickets edit %s page", style), page, total)
-				buttons = append(pagination, buttons...)
-			}
 		}
 	}
+	// common row with refresh button
+	buttons = append(buttons, []map[string]string{
+		{"refresh": fmt.Sprintf("tickets edit refresh %s", cmd)},
+	})
+	res += printUpdated(CFG.Users[uid].Tickets.Updated)
 	kb = genKeyboard(buttons)
 	return res, kb
 }
