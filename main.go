@@ -698,6 +698,10 @@ func manageUser(args string, enabled bool) string {
 
 // send text message with keyboard (both reply or inline) to user
 func sendMessage(id int64, text string, kb interface{}) (tgbotapi.Message, error) {
+	if len(text) > 4096 {
+		logWarning(fmt.Sprintf("Message too long: %d", len(text)))
+		text = fmtErr("Message too long!")
+	}
 	msg := tgbotapi.NewMessage(id, text)
 	msg.ParseMode = tgbotapi.ModeHTML
 	msg.ReplyMarkup = kb
@@ -710,6 +714,10 @@ func sendMessage(id int64, text string, kb interface{}) (tgbotapi.Message, error
 
 // edit message with inline keyboard
 func editMessage(m *tgbotapi.Message, textNew string, kbNew tgbotapi.InlineKeyboardMarkup, kbReplace bool) error {
+	if len(textNew) > 4096 {
+		logWarning(fmt.Sprintf("Message too long: %d", len(textNew)))
+		textNew = fmtErr("Message too long!")
+	}
 	var kb tgbotapi.InlineKeyboardMarkup
 	var msg tgbotapi.Chattable
 	if kbReplace {
@@ -1552,6 +1560,11 @@ func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarku
 			})
 		} else {
 			res = fmtObj(tickets, "ticket.list.tmpl")
+			// if message too long, try short template
+			if len(res) > 4000 {
+				res = fmtObj(tickets, "ticket.list.short.tmpl")
+				logWarning(fmt.Sprintf("Using short tickets template, len: %d", len(res)))
+			}
 			// generate index buttons
 			var row []map[string]string
 			for i := 1; i <= total; i++ {
