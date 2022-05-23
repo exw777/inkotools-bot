@@ -1634,6 +1634,12 @@ func main() {
 				msg = u.Message.Text
 			}
 
+			// workaround for contracts in cmd
+			if isContract(cmd) {
+				msg = cmd
+				cmd = "raw"
+			}
+
 			// cmd processing
 			switch cmd {
 			case "help":
