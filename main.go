@@ -1655,8 +1655,14 @@ func main() {
 					res = fmtErr("You have no permissions to work in this mode.")
 					goto SEND
 				}
-			case "raw", "report", "search", "ping", "calc", "config":
+			case "raw", "search", "ping", "calc", "config":
 				CFG.Users[uid].Mode = cmd
+			case "report":
+				CFG.Users[uid].Mode = cmd
+				res = "You are in report mode. " +
+					"Send message with your report, you can also attach screenshots or other media.\n" +
+					"To cancel and return to raw command mode, send /raw."
+				goto SEND
 			case "tickets":
 				res, kb = ticketsHandler(cmdArgs, uid)
 				goto SEND
@@ -1674,12 +1680,6 @@ func main() {
 			case "admin":
 				res = adminHandler(msg)
 			case "report":
-				if msg == "" {
-					res = "You are in report mode. " +
-						"Send message with your report, you can also attach screenshots or other media.\n" +
-						"To cancel and return to raw command mode, send /raw."
-					goto SEND
-				}
 				fwd := tgbotapi.NewForward(CFG.ReportChannel, uid, u.Message.MessageID)
 				_, err := Bot.Send(fwd)
 				if err != nil {
