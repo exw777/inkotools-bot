@@ -9,7 +9,7 @@
 &#128222; <a href="tel:{{ fmtPhone . }}">{{ fmtPhone . }}</a>
 {{- end }}
 {{- if or .City .Street }}
-&#127968; <code>{{ if ne .City "Коломна" }}{{ .City }}, {{ end -}}
+&#127968; <code>{{ if and .City (ne .City "Коломна") }}{{ .City }}, {{ end -}}
 {{- if .Street }}{{ .Street }} {{ end -}}
 {{- .House }}{{ if .Room }} - {{ .Room }}{{ end }}</code>
 {{- end }}
@@ -18,9 +18,10 @@
 {{- end }}
 {{- if or .City .Street .Company }}
 <a href="https://yandex.ru/maps/?text=Московская область
-{{- if .City -}}
-{{- if eq .City "Сосновый бор" }}, д. Негомож, городок 
-{{- else }}, г. {{ end }}{{ .City }}{{ end -}}
+{{- if eq .City "Сосновый бор" }}, д. Негомож, городок Сосновый бор
+{{- else if eq .City "Луховицы" }}, д. Щурово, городок Луховицы-3
+{{- else if .City }}, г. {{ .City }}
+{{- else }}, г. Коломна{{ end -}}
 {{- if .Street }}, ул. {{ .Street }}{{ end -}}
 {{- if .House }}, д. {{ .House }}{{ end -}}
 {{- if .Room }}, кв. {{ .Room }}{{ end -}}

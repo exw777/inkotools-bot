@@ -522,6 +522,12 @@ func fmtPhone(s string) string {
 	return s
 }
 
+// format address for short template
+func fmtAddress(s string) string {
+	re, _ := regexp.Compile(`Коломна |ул. |д. |п. \d+ |э. \d+ |офис/цех `)
+	return re.ReplaceAllString(s, "")
+}
+
 // mapstructure decode with custom date format
 func mapstructureDecode(input interface{}, output interface{}) {
 	config := mapstructure.DecoderConfig{
@@ -634,8 +640,9 @@ func loadConfig() error {
 			}
 			return "disabled"
 		},
-		"fmtPhone": fmtPhone,
-		"inc":      func(x int) int { return x + 1 },
+		"fmtPhone":   fmtPhone,
+		"fmtAddress": fmtAddress,
+		"inc":        func(x int) int { return x + 1 },
 	}
 	// load templates
 	TPL, err = template.New("templates").Funcs(funcMap).ParseGlob("templates/*")
