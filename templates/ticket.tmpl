@@ -1,6 +1,8 @@
 [<code>{{ .ContractID }}</code>] <b>{{ .Name }}</b>
 &#127968; <code>{{ fmtAddress .Address }}</code>
-{{ range .Contacts }}&#128222;<a href="tel:{{ fmtPhone . }}">{{ fmtPhone . }}</a> {{ end }}
+{{- range .Contacts }}
+&#128222;<a href="tel:{{ fmtPhone . }}">{{ fmtPhone . }}</a>
+{{- end }}
 [{{ .Created.Format "02.01.2006" }}] <b>{{ .Creator }}:</b> <i>{{ .Issue }}</i>
 {{- range .Comments }}
 [{{ .Time.Format "02.01 15:04" }}] <b>{{ .Author }}:</b> <i>{{ .Comment }}</i>
