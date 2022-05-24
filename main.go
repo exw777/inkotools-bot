@@ -524,7 +524,7 @@ func fmtPhone(s string) string {
 
 // format address for short template
 func fmtAddress(s string) string {
-	re, _ := regexp.Compile(`Коломна |ул. |д. |п. \d+ |э. \d+ |офис/цех `)
+	re, _ := regexp.Compile(`Коломна |ул. |д. |п. \d+ |э. \d+ |офис/цех. `)
 	return re.ReplaceAllString(s, "")
 }
 
