@@ -1506,7 +1506,7 @@ func printConfig(uid int64) (string, tgbotapi.InlineKeyboardMarkup) {
 func updateTickets(uid int64) error {
 	// clear cache before update
 	CFG.Users[uid].Tickets.Data = nil
-	resp, err := requestAPI("POST", "/gdb/tickets", map[string]interface{}{"token": CFG.Users[uid].Token})
+	resp, err := requestAPI("GET", "/gdb/user/tickets", map[string]interface{}{"token": CFG.Users[uid].Token})
 	if err != nil {
 		return err
 	}
