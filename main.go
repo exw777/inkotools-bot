@@ -1201,6 +1201,10 @@ func rawHandler(raw string) (string, tgbotapi.InlineKeyboardMarkup) {
 		res = fmtErr("Failed to parse raw input.")
 		logError(fmt.Sprintf("[rawHandler] Failed to parse: %s", raw))
 	}
+	// default keyboard with close button
+	if len(kb.InlineKeyboard) == 0 {
+		kb = genKeyboard([][]map[string]string{{{"close": "close"}}})
+	}
 	return res, kb
 }
 
@@ -1240,11 +1244,12 @@ func swHandler(ip string, port string, args string) (string, tgbotapi.InlineKeyb
 		{
 			// inverted view for full/short button calculated as (1 - idx)
 			{pView[1-idx]: fmt.Sprintf("raw edit %s %s %s", ip, port, pView[1-idx])},
+			{"clear counters": fmt.Sprintf("raw edit %s %s %s clear", ip, port, pView[idx])},
 		},
 		{
 			{"refresh": fmt.Sprintf("raw edit %s %s %s", ip, port, pView[idx])},
-			{"clear": fmt.Sprintf("raw edit %s %s %s clear", ip, port, pView[idx])},
 			{"repeat": fmt.Sprintf("raw send %s %s %s", ip, port, pView[idx])},
+			{"close": "close"},
 		},
 	})
 	return res, kb
@@ -1302,6 +1307,9 @@ func clientHandler(client string, args string) (string, tgbotapi.InlineKeyboardM
 				tgbotapi.NewInlineKeyboardButtonData(kbBtn, fmt.Sprintf("raw edit %s %s", client, kbBtn)),
 			),
 			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("close", "close"),
+			),
+			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonURL("open in gray database", gdbURL),
 			),
 		)
@@ -1338,7 +1346,9 @@ func searchHandler(kw string, page int) (string, tgbotapi.InlineKeyboardMarkup) 
 			res = fmtObj(result, "search.tmpl")
 			// callback pagination
 			if result.Meta.Pages.Total > 1 {
-				kb = genKeyboard(rowPagination(fmt.Sprintf("search edit %s", kw), page, result.Meta.Pages.Total))
+				kb = genKeyboard(append(
+					rowPagination(fmt.Sprintf("search edit %s", kw), page, result.Meta.Pages.Total),
+					[]map[string]string{{"close": "close"}}))
 			}
 		}
 	}
@@ -1455,13 +1465,14 @@ func configHandler(msg string, uid int64, msgID int) (string, tgbotapi.InlineKey
 				map[string]interface{}{"login": creds[0], "password": creds[1]})
 			if err != nil {
 				res = fmtErr(err.Error())
-				kb = genKeyboard([][]map[string]string{{{"try again": "config edit login"}}})
+				kb = genKeyboard([][]map[string]string{{{"try again": "config send login"}, {"close": "close"}}})
 			} else {
 				mapstructure.Decode(resp["data"].(map[string]interface{})["token"], &CFG.Users[uid].Token)
 				saveConfig()
 				res, kb = printConfig(uid)
 			}
-
+			// return to raw mode
+			CFG.Users[uid].Mode = "raw"
 		} else {
 			res, kb = printConfig(uid)
 		}
@@ -1496,7 +1507,7 @@ func printConfig(uid int64) (string, tgbotapi.InlineKeyboardMarkup) {
 			{"edit credentials": "config send login"},
 		},
 		{
-			{"back to raw": "raw edit"},
+			{"close": "close"},
 		},
 	})
 	return res, kb
@@ -1590,9 +1601,10 @@ func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarku
 			}
 		}
 	}
-	// common row with refresh button
+	// common row with refresh and close buttons
 	buttons = append(buttons, []map[string]string{
 		{"refresh": fmt.Sprintf("tickets edit refresh %s", cmd)},
+		{"close": "close"},
 	})
 	res += printUpdated(CFG.Users[uid].Tickets.Updated)
 	kb = genKeyboard(buttons)
@@ -1657,13 +1669,16 @@ func main() {
 					res = fmtErr("You have no permissions to work in this mode.")
 					goto SEND
 				}
-			case "raw", "search", "ping", "calc", "config":
+			case "raw", "search", "ping", "calc":
 				CFG.Users[uid].Mode = cmd
 			case "report":
 				CFG.Users[uid].Mode = cmd
 				res = "You are in report mode. " +
 					"Send message with your report, you can also attach screenshots or other media.\n" +
 					"To cancel and return to raw command mode, send /raw."
+				goto SEND
+			case "config":
+				res, kb = configHandler(msg, uid, u.Message.MessageID)
 				goto SEND
 			case "tickets":
 				res, kb = ticketsHandler(cmdArgs, uid)
@@ -1714,14 +1729,21 @@ func main() {
 				logWarning("[message] Empty result")
 				Bot.Request(tgbotapi.NewDeleteMessage(uid, tmpMsg.MessageID))
 			}
-			// callback updates
-		} else if u.CallbackData() != "" {
+			// clear user input
+			Bot.Request(tgbotapi.NewDeleteMessage(uid, u.Message.MessageID))
+
+		} else if u.CallbackData() != "" { // callback updates
 			logInfo(fmt.Sprintf("[callback] [%s] %s", CFG.Users[uid].Name, u.CallbackData()))
 			// skip dummy button
 			if u.CallbackData() == "dummy" {
 				continue
 			}
 			msg := u.CallbackQuery.Message
+			// delete message on close button
+			if u.CallbackData() == "close" {
+				Bot.Request(tgbotapi.NewDeleteMessage(uid, msg.MessageID))
+				continue
+			}
 			var res string                       // output message
 			var kb tgbotapi.InlineKeyboardMarkup // output keyboard markup
 			mode, args := splitArgs(u.CallbackData())
