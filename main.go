@@ -1533,6 +1533,8 @@ func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarku
 	}
 	// update tickets cache on refresh and first run
 	if strings.Contains(cmd, "refresh") || cmd == "" || CFG.Users[uid].Tickets.Updated.IsZero() {
+		// trim cmd to prevent duplication in refresh button
+		cmd = strings.Replace(cmd, "refresh ", "", -1)
 		if err := updateTickets(uid); err != nil {
 			return fmtErr(err.Error()), kb
 		}
