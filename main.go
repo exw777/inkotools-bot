@@ -1577,6 +1577,7 @@ func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarku
 			buttons = append(buttons, []map[string]string{
 				{"all tickets": "tickets edit list"},
 				{"client info": fmt.Sprintf("raw send %s", ticket.ContractID)},
+				{"add comment": fmt.Sprintf("comment send %s %d", ticket.ContractID, ticket.TicketID)},
 			})
 		} else {
 			res = fmtObj(tickets, "ticket.list.tmpl")
@@ -1608,6 +1609,42 @@ func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarku
 	})
 	res += printUpdated(CFG.Users[uid].Tickets.Updated)
 	kb = genKeyboard(buttons)
+	return res, kb
+}
+
+// add comment to ticket
+func commentHandler(args string, uid int64, msgID int) (string, tgbotapi.InlineKeyboardMarkup) {
+	var res, cID, tID, comment string
+	var kb tgbotapi.InlineKeyboardMarkup
+	if CFG.Users[uid].TMP == "" {
+		cID, args = splitArgs(args)
+		tID, args = splitArgs(args)
+		res = "Enter new comment:"
+		// store temporary data and change mode
+		CFG.Users[uid].TMP = fmt.Sprintf("%d %s %s", msgID, cID, tID)
+		CFG.Users[uid].Mode = "comment"
+	} else {
+		m, a := splitArgs(CFG.Users[uid].TMP)
+		msgID, _ = strconv.Atoi(m)
+		Bot.Request(tgbotapi.NewDeleteMessage(uid, msgID))
+		cID, tID = splitArgs(a)
+		comment = args
+		resp, err := requestAPI("POST",
+			fmt.Sprintf("/gdb/%s/tickets/%s", cID, tID),
+			map[string]interface{}{
+				"token":   CFG.Users[uid].Token,
+				"comment": comment,
+			})
+		if err != nil {
+			res = fmtErr(err.Error())
+		} else {
+			res = resp["detail"].(string)
+		}
+		kb = genKeyboard([][]map[string]string{{{"close": "close"}}})
+		// clear tmp and restore mode
+		CFG.Users[uid].TMP = ""
+		CFG.Users[uid].Mode = "raw"
+	}
 	return res, kb
 }
 
@@ -1692,7 +1729,7 @@ func main() {
 				goto SEND
 			}
 
-			// msg processing
+			// mode processing
 			switch CFG.Users[uid].Mode {
 			case "admin":
 				res = adminHandler(msg)
@@ -1715,6 +1752,8 @@ func main() {
 				res = calcHandler(msg)
 			case "config":
 				res, kb = configHandler(msg, uid, u.Message.MessageID)
+			case "comment":
+				res, kb = commentHandler(msg, uid, 0)
 			default: // default is raw mode
 				res, kb = rawHandler(msg)
 			}
@@ -1772,6 +1811,8 @@ func main() {
 				res, kb = configHandler(rawCmd, uid, 0)
 			case "tickets":
 				res, kb = ticketsHandler(rawCmd, uid)
+			case "comment":
+				res, kb = commentHandler(rawCmd, uid, msg.MessageID)
 			default:
 				logWarning(fmt.Sprintf("[callback] wrong mode: %s", mode))
 				goto CALLBACK
