@@ -1778,11 +1778,6 @@ func main() {
 				continue
 			}
 			msg := u.CallbackQuery.Message
-			// delete message on close button
-			if u.CallbackData() == "close" {
-				Bot.Request(tgbotapi.NewDeleteMessage(uid, msg.MessageID))
-				continue
-			}
 			var res string                       // output message
 			var kb tgbotapi.InlineKeyboardMarkup // output keyboard markup
 			mode, args := splitArgs(u.CallbackData())
@@ -1813,6 +1808,15 @@ func main() {
 				res, kb = ticketsHandler(rawCmd, uid)
 			case "comment":
 				res, kb = commentHandler(rawCmd, uid, msg.MessageID)
+			case "close":
+				// delete message on close button
+				_, err := Bot.Request(tgbotapi.NewDeleteMessage(uid, msg.MessageID))
+				if err != nil {
+					logError(fmt.Sprintf("[close] %v", err))
+					res = fmtErr(err.Error())
+				} else {
+					continue
+				}
 			default:
 				logWarning(fmt.Sprintf("[callback] wrong mode: %s", mode))
 				goto CALLBACK
