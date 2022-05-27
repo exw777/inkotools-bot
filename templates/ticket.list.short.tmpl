@@ -1,4 +1,4 @@
 &#9888;<b>Too many tickets, using short view</b>
 {{ range $i, $e := . }}
-{{ inc $i }} /{{ .ContractID }} {{ fmtAddress .Address }}
+{{ inc $i }}{{if .Modified }}*{{ end }} /{{ .ContractID }} {{ fmtAddress .Address }}
 {{ end -}}

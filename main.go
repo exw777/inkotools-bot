@@ -46,7 +46,10 @@ type User struct {
 	Token   string `yaml:"token"`
 	TMP     string `yaml:"-"` // to save permanent data between messages
 	Tickets struct {
-		Data    []Ticket
+		Data []Ticket `mapstructure:"data"`
+		Meta struct {
+			User string `mapstructure:"username"`
+		} `mapstructure:"meta"`
 		Updated time.Time
 	} `yaml:"-"`
 }
@@ -281,6 +284,7 @@ type Ticket struct {
 	Address    string          `mapstructure:"address"`
 	Contacts   []string        `mapstructure:"contacts"`
 	Updated    time.Time
+	Modified   bool
 }
 
 // TicketComment type
@@ -1521,15 +1525,18 @@ func updateTickets(uid int64) error {
 	if err != nil {
 		return err
 	}
-	mapstructureDecode(resp["data"], &CFG.Users[uid].Tickets.Data)
+	mapstructureDecode(resp, &CFG.Users[uid].Tickets)
 	for i, e := range CFG.Users[uid].Tickets.Data {
 		c := len(e.Comments)
 		if c > 0 {
 			CFG.Users[uid].Tickets.Data[i].Updated = e.Comments[c-1].Time
+			if e.Comments[c-1].Author != CFG.Users[uid].Tickets.Meta.User {
+				CFG.Users[uid].Tickets.Data[i].Modified = true
+			}
 		}
 	}
 	CFG.Users[uid].Tickets.Updated = time.Now()
-	logDebug(fmt.Sprintf("Updated tickets: %+v", CFG.Users[uid].Tickets.Data))
+	logDebug(fmt.Sprintf("Updated tickets: %+v", CFG.Users[uid].Tickets))
 	return nil
 }
 
