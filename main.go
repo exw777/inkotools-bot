@@ -489,7 +489,7 @@ func fmtBytes(bytes uint, toBits bool) string {
 	}
 	res := float64(bytes)
 	i := 0
-	for ; res >= ratio && i < len(units); i++ {
+	for ; res >= ratio && i < len(units)-1; i++ {
 		res /= ratio
 	}
 	return fmt.Sprintf("%.2f %s", res, units[i])
