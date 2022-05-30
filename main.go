@@ -41,11 +41,15 @@ type Config struct {
 
 // User struct
 type User struct {
-	Name    string `yaml:"name"`
-	Mode    string `yaml:"-"`
-	Token   string `yaml:"token"`
-	TMP     string `yaml:"-"` // to save permanent data between messages
-	Tickets struct {
+	Name            string `yaml:"name"`
+	Mode            string `yaml:"-"`
+	Token           string `yaml:"token"`
+	TMP             string `yaml:"-"` // to save temporary data between messages
+	Username        string `yaml:"-"` // not saved, returned from api by token
+	RefreshInterval string `yaml:"refresh_interval"`
+	NotifyNew       bool   `yaml:"notify_new"`
+	NotifyUpdate    bool   `yaml:"notify_update"`
+	Tickets         struct {
 		Data []Ticket `mapstructure:"data"`
 		Meta struct {
 			User string `mapstructure:"username"`
@@ -1447,40 +1451,65 @@ func pingHandler(msg string, uid int64) string {
 
 // config mode handler
 func configHandler(msg string, uid int64, msgID int) (string, tgbotapi.InlineKeyboardMarkup) {
+	// msgID is for deferred message deletion
 	var res string
 	var kb tgbotapi.InlineKeyboardMarkup
-	switch msg {
-	case "login":
-		res = "Enter login:"
-		CFG.Users[uid].TMP = "login"
-	default:
-		if CFG.Users[uid].TMP == "login" { // user entered login
+
+	// subcommands processing, msg - subcommand
+	if CFG.Users[uid].TMP == "" {
+		switch msg {
+		case "login", "interval":
+			res = fmt.Sprintf("Enter new %s:", msg)
+			// change mode for user input and save tmp data
+			CFG.Users[uid].Mode = "config"
+			CFG.Users[uid].TMP = fmt.Sprintf("%d %s", msgID, msg)
+		case "toggleNew":
+			CFG.Users[uid].NotifyNew = !CFG.Users[uid].NotifyNew
+		case "toggleUpdate":
+			CFG.Users[uid].NotifyUpdate = !CFG.Users[uid].NotifyUpdate
+		case "save":
+			saveConfig()
+		}
+
+	} else { // input mode, msg - data entered by user
+		// unpack saved data
+		strID, savedData := splitArgs(CFG.Users[uid].TMP)
+		enteredKey, savedData := splitArgs(savedData)
+		oldMsgID, _ := strconv.Atoi(strID)
+		enteredValue := msg
+		// delete previous bot message
+		Bot.Request(tgbotapi.NewDeleteMessage(uid, oldMsgID))
+		switch enteredKey {
+		case "login":
+			// save entered login to tmp and ask for password
 			res = "Enter password:"
-			CFG.Users[uid].TMP = fmt.Sprintf("%s\npass", msg)
-		} else if strings.HasSuffix(CFG.Users[uid].TMP, "\npass") { // user entered password
-			CFG.Users[uid].TMP = strings.TrimSuffix(CFG.Users[uid].TMP, "\npass") + "\n" + msg
-			creds := strings.Split(CFG.Users[uid].TMP, "\n")
-			// clear permanent storage
-			CFG.Users[uid].TMP = ""
-			// remove user message with password for privacy
-			Bot.Request(tgbotapi.NewDeleteMessage(uid, msgID))
+			CFG.Users[uid].TMP = fmt.Sprintf("%d password %s", msgID, enteredValue)
+		case "password":
 			// try to get gray database token from api
 			resp, err := requestAPI("POST", "/gdb/user/get_token",
-				map[string]interface{}{"login": creds[0], "password": creds[1]})
+				map[string]interface{}{"login": savedData, "password": enteredValue})
 			if err != nil {
 				res = fmtErr(err.Error())
-				kb = genKeyboard([][]map[string]string{{{"try again": "config send login"}, {"close": "close"}}})
+				kb = genKeyboard([][]map[string]string{{{"try again": "config edit login"}, {"close": "close"}}})
 			} else {
 				mapstructure.Decode(resp["data"].(map[string]interface{})["token"], &CFG.Users[uid].Token)
-				saveConfig()
-				res, kb = printConfig(uid)
 			}
-			// return to raw mode
-			CFG.Users[uid].Mode = "raw"
-		} else {
-			res, kb = printConfig(uid)
+			CFG.Users[uid].TMP = ""
+		case "interval":
+			CFG.Users[uid].RefreshInterval = enteredValue
+			CFG.Users[uid].TMP = ""
 		}
 	}
+
+	// restore mode on cleared tmp
+	if CFG.Users[uid].TMP == "" {
+		CFG.Users[uid].Mode = "raw"
+	}
+	// print config on empty res
+	if res == "" {
+		res, kb = printConfig(uid)
+	}
+
 	return res, kb
 }
 
@@ -1493,7 +1522,7 @@ func printLogin() (string, tgbotapi.InlineKeyboardMarkup) {
 
 // print user config
 func printConfig(uid int64) (string, tgbotapi.InlineKeyboardMarkup) {
-	var res, usr string
+	var res string
 	var kb tgbotapi.InlineKeyboardMarkup
 	if CFG.Users[uid].Token == "" {
 		return printLogin()
@@ -1501,16 +1530,22 @@ func printConfig(uid int64) (string, tgbotapi.InlineKeyboardMarkup) {
 	// get username from api
 	resp, err := requestAPI("GET", "/gdb/user", map[string]interface{}{"token": CFG.Users[uid].Token})
 	if err != nil {
-		usr = err.Error()
+		CFG.Users[uid].Username = err.Error()
 	} else {
-		mapstructure.Decode(resp["data"].(map[string]interface{})["username"], &usr)
+		mapstructure.Decode(resp["data"].(map[string]interface{})["username"], &CFG.Users[uid].Username)
 	}
-	res = fmt.Sprintf("<b>Logged as: </b><code>%s</code>", usr)
+	res = fmtObj(CFG.Users[uid], "config.tmpl")
 	kb = genKeyboard([][]map[string]string{
 		{
-			{"edit credentials": "config send login"},
+			{"edit credentials": "config edit login"},
+			{"edit interval": "config edit interval"},
 		},
 		{
+			{"toggle New": "config edit toggleNew"},
+			{"toggle Update": "config edit toggleUpdate"},
+		},
+		{
+			{"save": "config edit save"},
 			{"close": "close"},
 		},
 	})
@@ -1713,16 +1748,13 @@ func main() {
 					res = fmtErr("You have no permissions to work in this mode.")
 					goto SEND
 				}
-			case "raw", "search", "ping", "calc":
+			case "raw", "search", "ping", "calc", "config":
 				CFG.Users[uid].Mode = cmd
 			case "report":
 				CFG.Users[uid].Mode = cmd
 				res = "You are in report mode. " +
 					"Send message with your report, you can also attach screenshots or other media.\n" +
 					"To cancel and return to raw command mode, send /raw."
-				goto SEND
-			case "config":
-				res, kb = configHandler(msg, uid, u.Message.MessageID)
 				goto SEND
 			case "tickets":
 				res, kb = ticketsHandler(cmdArgs, uid)
@@ -1758,7 +1790,8 @@ func main() {
 			case "calc":
 				res = calcHandler(msg)
 			case "config":
-				res, kb = configHandler(msg, uid, u.Message.MessageID)
+				// increased msgID - future answer from bot
+				res, kb = configHandler(msg, uid, u.Message.MessageID+1)
 			case "comment":
 				res, kb = commentHandler(msg, uid, 0)
 			default: // default is raw mode
@@ -1810,7 +1843,7 @@ func main() {
 				page, _ := strconv.Atoi(p)
 				res, kb = searchHandler(kw, page)
 			case "config":
-				res, kb = configHandler(rawCmd, uid, 0)
+				res, kb = configHandler(rawCmd, uid, msg.MessageID)
 			case "tickets":
 				res, kb = ticketsHandler(rawCmd, uid)
 			case "comment":
