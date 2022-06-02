@@ -1828,8 +1828,6 @@ func main() {
 				logWarning(fmt.Sprintf("[callback] wrong mode: %s", mode))
 				goto CALLBACK
 			}
-			// restore mode if it was changed by another command
-			CFG.Users[uid].Mode = mode
 
 			// edit message
 			if len(kb.InlineKeyboard) > 0 {
