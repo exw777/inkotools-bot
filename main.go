@@ -1306,15 +1306,19 @@ func clientHandler(client string, args string) (string, tgbotapi.InlineKeyboardM
 		mapstructureDecode(resp["data"], &cData)
 		res = fmtObj(cData, template)
 		gdbURL := strings.TrimRight(CFG.GraydbURL, "/") + fmt.Sprintf("/index.php?id_aabon=%d", cData.ClientID)
+		gdbArchiveURL := strings.TrimRight(CFG.GraydbURL, "/") + fmt.Sprintf("/arx_zay.php?dogovor=%s", cData.ContractID)
 		kb = tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData(kbBtn, fmt.Sprintf("raw edit %s %s", client, kbBtn)),
 			),
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("close", "close"),
+				tgbotapi.NewInlineKeyboardButtonURL("open in gray database", gdbURL),
 			),
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonURL("open in gray database", gdbURL),
+				tgbotapi.NewInlineKeyboardButtonURL("tickets archive", gdbArchiveURL),
+			),
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("close", "close"),
 			),
 		)
 		// check client switch ip and port and add port button
