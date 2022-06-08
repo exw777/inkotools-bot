@@ -727,6 +727,14 @@ func sendMessage(id int64, text string, kb interface{}) (tgbotapi.Message, error
 	return res, err
 }
 
+// clear custom keyboard
+func clearReplyKeyboard(uid int64) {
+	k := tgbotapi.NewRemoveKeyboard(true)
+	// send and remove dummy message
+	m, _ := sendMessage(uid, "Dummy", k)
+	Bot.Request(tgbotapi.NewDeleteMessage(uid, m.MessageID))
+}
+
 // edit message with inline keyboard
 func editMessage(m *tgbotapi.Message, textNew string, kbNew tgbotapi.InlineKeyboardMarkup, kbReplace bool) error {
 	if len(textNew) > 4096 {
@@ -1279,23 +1287,25 @@ func calcHandler(arg string) string {
 func clientHandler(client string, args string) (string, tgbotapi.InlineKeyboardMarkup) {
 	var res string                       // text message result
 	var kb tgbotapi.InlineKeyboardMarkup // inline keyboard markup
-	var kbBtn string                     // full/short style switch button text
+	var btns []string                    // switch view buttons text
 	var cData Contract                   // client data struct
-	var endpoint, template string
+	var endpoint, template, style string
 	logDebug(fmt.Sprintf("[clientHandler] client: %s, args: %s", client, args))
-	style, args := splitArgs(args)
-	// set full/short template and set keyboard button text
-	switch style {
-	case "full":
-		template = "contract.tmpl"
-		kbBtn = "short"
-	case "short":
-		template = "contract.short.tmpl"
-		kbBtn = "full"
+	view, args := splitArgs(args)
+	// set api request style, view template and buttons
+	switch view {
+	case "billing":
+		style = "billing"
+		template = "contract.billing.tmpl"
+		btns = []string{"contacts", "tickets"}
+	case "tickets":
+		style = "short"
+		template = "contract.tickets.tmpl"
+		btns = []string{"contacts", "billing"}
 	default:
 		style = "short"
 		template = "contract.short.tmpl"
-		kbBtn = "full"
+		btns = []string{"tickets", "billing"}
 	}
 	// client is contract id or ip address
 	if isContract(client) {
@@ -1307,18 +1317,51 @@ func clientHandler(client string, args string) (string, tgbotapi.InlineKeyboardM
 	if err != nil {
 		res = fmtErr(err.Error())
 	} else {
-		mapstructureDecode(resp["data"], &cData)
+		if style == "billing" {
+			mapstructureDecode(resp["data"], &cData.Billing)
+			mapstructureDecode(resp["meta"], &cData) // contract id
+		} else {
+			mapstructureDecode(resp["data"], &cData)
+		}
 		res = fmtObj(cData, template)
 		gdbURL := strings.TrimRight(CFG.GraydbURL, "/") + fmt.Sprintf("/index.php?id_aabon=%d", cData.ClientID)
-		kb = tgbotapi.NewInlineKeyboardMarkup(
+		gdbArchiveURL := strings.TrimRight(CFG.GraydbURL, "/") + fmt.Sprintf("/arx_zay.php?dogovor=%s", cData.ContractID)
+		// init keyboard with empty row
+		kb = tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow())
+		// add view buttons to row
+		for _, btn := range btns {
+			// skip tickets button if no tickets
+			if btn == "tickets" && len(cData.Tickets) == 0 {
+				continue
+			}
+			kb.InlineKeyboard[0] = append(
+				kb.InlineKeyboard[0],
+				tgbotapi.NewInlineKeyboardButtonData(btn, fmt.Sprintf("raw edit %s %s", client, btn)),
+			)
+		}
+		// add tickets commenting buttons
+		if view == "tickets" {
+			for i, ticket := range cData.Tickets {
+				kb.InlineKeyboard = append(kb.InlineKeyboard,
+					tgbotapi.NewInlineKeyboardRow(
+						tgbotapi.NewInlineKeyboardButtonData(
+							fmt.Sprintf(" [%d] add comment (%s)", i+1, ticket.Master),
+							fmt.Sprintf("comment edit %s %d", cData.ContractID, ticket.TicketID),
+						),
+					),
+				)
+			}
+		}
+		// add other rows
+		kb.InlineKeyboard = append(kb.InlineKeyboard,
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(kbBtn, fmt.Sprintf("raw edit %s %s", client, kbBtn)),
+				tgbotapi.NewInlineKeyboardButtonURL("open in gray database", gdbURL),
+			),
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonURL("tickets archive", gdbArchiveURL),
 			),
 			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData("close", "close"),
-			),
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonURL("open in gray database", gdbURL),
 			),
 		)
 		// check client switch ip and port and add port button
@@ -1609,7 +1652,7 @@ func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarku
 			}
 			// get current ticket
 			ticket := tickets[page-1]
-			res = fmtObj(ticket, "ticket.tmpl")
+			res = fmtObj(ticket, "ticket.user.tmpl")
 			res += fmt.Sprintf("\nTicket: <b>%d/%d</b>", page, total)
 			// pagination row
 			if total > 1 {
@@ -1619,7 +1662,7 @@ func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarku
 			buttons = append(buttons, []map[string]string{
 				{"all tickets": "tickets edit list"},
 				{"client info": fmt.Sprintf("raw send %s", ticket.ContractID)},
-				{"add comment": fmt.Sprintf("comment send %s %d", ticket.ContractID, ticket.TicketID)},
+				{"add comment": fmt.Sprintf("comment edit %s %d", ticket.ContractID, ticket.TicketID)},
 			})
 		} else {
 			res = fmtObj(tickets, "ticket.list.tmpl")
@@ -1656,36 +1699,52 @@ func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarku
 
 // add comment to ticket
 func commentHandler(args string, uid int64, msgID int) (string, tgbotapi.InlineKeyboardMarkup) {
-	var res, cID, tID, comment string
+	var res string
 	var kb tgbotapi.InlineKeyboardMarkup
-	if CFG.Users[uid].TMP == "" {
-		cID, args = splitArgs(args)
-		tID, args = splitArgs(args)
-		res = "Enter new comment:"
+	// args format for init message: 'clientID ticketID'
+	reInit, _ := regexp.Compile(`^[0-9]{5} \d+$`)
+	if reInit.MatchString(args) {
+		// send prompt with cancel button ans save its id
+		k := tgbotapi.NewReplyKeyboard(tgbotapi.NewKeyboardButtonRow(tgbotapi.NewKeyboardButton("cancel")))
+		m, _ := sendMessage(uid, "Enter new comment:", k)
 		// store temporary data and change mode
-		CFG.Users[uid].TMP = fmt.Sprintf("%d %s %s", msgID, cID, tID)
+		CFG.Users[uid].TMP = fmt.Sprintf("%d %d %s", msgID, m.MessageID, args)
 		CFG.Users[uid].Mode = "comment"
-	} else {
-		m, a := splitArgs(CFG.Users[uid].TMP)
-		msgID, _ = strconv.Atoi(m)
-		Bot.Request(tgbotapi.NewDeleteMessage(uid, msgID))
-		cID, tID = splitArgs(a)
-		comment = args
-		resp, err := requestAPI("POST",
-			fmt.Sprintf("/gdb/%s/tickets/%s", cID, tID),
-			map[string]interface{}{
-				"token":   CFG.Users[uid].Token,
-				"comment": comment,
-			})
-		if err != nil {
-			res = fmtErr(err.Error())
-		} else {
-			res = resp["detail"].(string)
+	} else if CFG.Users[uid].TMP != "" {
+		// unpack temporary data [initMsgID, promtMsgID, clientID, ticketID]
+		tmpData := strings.Split(CFG.Users[uid].TMP, " ")
+		// delete previous two messages (init and prompt)
+		for i := 0; i <= 1; i++ {
+			m, _ := strconv.Atoi(tmpData[i])
+			Bot.Request(tgbotapi.NewDeleteMessage(uid, m))
 		}
-		kb = genKeyboard([][]map[string]string{{{"close": "close"}}})
-		// clear tmp and restore mode
+		if args == "cancel" {
+			// on cancel return to tickets list
+			res, kb = ticketsHandler("list", uid)
+		} else {
+			// add new comment
+			_, err := requestAPI("POST",
+				fmt.Sprintf("/gdb/%s/tickets/%s", tmpData[2], tmpData[3]),
+				map[string]interface{}{
+					"token":   CFG.Users[uid].Token,
+					"comment": args,
+				})
+			if err != nil {
+				res = fmtErr(err.Error())
+				kb = genKeyboard([][]map[string]string{{{"close": "close"}}})
+			} else {
+				updateTickets(uid)
+				res, kb = clientHandler(tmpData[2], "tickets")
+			}
+		}
+		// clear tmp, restore mode, remove cancel button
 		CFG.Users[uid].TMP = ""
 		CFG.Users[uid].Mode = "raw"
+		clearReplyKeyboard(uid)
+	} else {
+		res = fmtErr("Wrong comment params")
+		kb = genKeyboard([][]map[string]string{{{"close": "close"}}})
+		logError(fmt.Sprintf("[comment] Wrong params: %s", args))
 	}
 	return res, kb
 }
@@ -1748,7 +1807,7 @@ func main() {
 					res = fmtErr("You have no permissions to work in this mode.")
 					goto SEND
 				}
-			case "raw", "search", "ping", "calc", "config":
+			case "raw", "search", "ping", "calc", "comment", "config":
 				CFG.Users[uid].Mode = cmd
 			case "report":
 				CFG.Users[uid].Mode = cmd
@@ -1861,8 +1920,6 @@ func main() {
 				logWarning(fmt.Sprintf("[callback] wrong mode: %s", mode))
 				goto CALLBACK
 			}
-			// restore mode if it was changed by another command
-			CFG.Users[uid].Mode = mode
 
 			// edit message
 			if len(kb.InlineKeyboard) > 0 {

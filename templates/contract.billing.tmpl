@@ -1,7 +1,4 @@
-{{- template "contract.short.tmpl" . }}
-{{- if .Comment }}
-<i>Comment: </i><pre>{{ .Comment }}</pre>
-{{- end }}
+[<code>{{ .ContractID }}</code>]
 {{- with .Billing.Inet }}
 {{- if .ID }}
 
