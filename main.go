@@ -1283,23 +1283,25 @@ func calcHandler(arg string) string {
 func clientHandler(client string, args string) (string, tgbotapi.InlineKeyboardMarkup) {
 	var res string                       // text message result
 	var kb tgbotapi.InlineKeyboardMarkup // inline keyboard markup
-	var kbBtn string                     // full/short style switch button text
+	var btns []string                    // switch view buttons text
 	var cData Contract                   // client data struct
-	var endpoint, template string
+	var endpoint, template, style string
 	logDebug(fmt.Sprintf("[clientHandler] client: %s, args: %s", client, args))
-	style, args := splitArgs(args)
-	// set full/short template and set keyboard button text
-	switch style {
-	case "full":
-		template = "contract.tmpl"
-		kbBtn = "short"
-	case "short":
-		template = "contract.short.tmpl"
-		kbBtn = "full"
+	view, args := splitArgs(args)
+	// set api request style, view template and buttons
+	switch view {
+	case "billing":
+		style = "billing"
+		template = "contract.billing.tmpl"
+		btns = []string{"contacts", "tickets"}
+	case "tickets":
+		style = "short"
+		template = "contract.tickets.tmpl"
+		btns = []string{"contacts", "billing"}
 	default:
 		style = "short"
 		template = "contract.short.tmpl"
-		kbBtn = "full"
+		btns = []string{"tickets", "billing"}
 	}
 	// client is contract id or ip address
 	if isContract(client) {
@@ -1311,14 +1313,43 @@ func clientHandler(client string, args string) (string, tgbotapi.InlineKeyboardM
 	if err != nil {
 		res = fmtErr(err.Error())
 	} else {
-		mapstructureDecode(resp["data"], &cData)
+		if style == "billing" {
+			mapstructureDecode(resp["data"], &cData.Billing)
+			mapstructureDecode(resp["meta"], &cData) // contract id
+		} else {
+			mapstructureDecode(resp["data"], &cData)
+		}
 		res = fmtObj(cData, template)
 		gdbURL := strings.TrimRight(CFG.GraydbURL, "/") + fmt.Sprintf("/index.php?id_aabon=%d", cData.ClientID)
 		gdbArchiveURL := strings.TrimRight(CFG.GraydbURL, "/") + fmt.Sprintf("/arx_zay.php?dogovor=%s", cData.ContractID)
-		kb = tgbotapi.NewInlineKeyboardMarkup(
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(kbBtn, fmt.Sprintf("raw edit %s %s", client, kbBtn)),
-			),
+		// init keyboard with empty row
+		kb = tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow())
+		// add view buttons to row
+		for _, btn := range btns {
+			// skip tickets button if no tickets
+			if btn == "tickets" && len(cData.Tickets) == 0 {
+				continue
+			}
+			kb.InlineKeyboard[0] = append(
+				kb.InlineKeyboard[0],
+				tgbotapi.NewInlineKeyboardButtonData(btn, fmt.Sprintf("raw edit %s %s", client, btn)),
+			)
+		}
+		// add tickets commenting buttons
+		if view == "tickets" {
+			for i, ticket := range cData.Tickets {
+				kb.InlineKeyboard = append(kb.InlineKeyboard,
+					tgbotapi.NewInlineKeyboardRow(
+						tgbotapi.NewInlineKeyboardButtonData(
+							fmt.Sprintf(" [%d] add comment (%s)", i+1, ticket.Master),
+							fmt.Sprintf("comment edit %s %d", cData.ContractID, ticket.TicketID),
+						),
+					),
+				)
+			}
+		}
+		// add other rows
+		kb.InlineKeyboard = append(kb.InlineKeyboard,
 			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonURL("open in gray database", gdbURL),
 			),
@@ -1586,7 +1617,7 @@ func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarku
 			}
 			// get current ticket
 			ticket := tickets[page-1]
-			res = fmtObj(ticket, "ticket.tmpl")
+			res = fmtObj(ticket, "ticket.user.tmpl")
 			res += fmt.Sprintf("\nTicket: <b>%d/%d</b>", page, total)
 			// pagination row
 			if total > 1 {
@@ -1668,7 +1699,7 @@ func commentHandler(args string, uid int64, msgID int) (string, tgbotapi.InlineK
 				kb = genKeyboard([][]map[string]string{{{"close": "close"}}})
 			} else {
 				updateTickets(uid)
-				res, kb = ticketsHandler("list", uid)
+				res, kb = clientHandler(tmpData[2], "tickets")
 			}
 		}
 		// clear tmp, restore mode, remove cancel button

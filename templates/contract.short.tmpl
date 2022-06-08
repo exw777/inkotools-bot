@@ -37,3 +37,9 @@
 {{- if .Cable }}
 <i>Cable: </i><code>{{ .Cable }}</code>
 {{- end }}
+{{- if .Comment }}
+<i>{{ .Comment }}</i>
+{{- end }}
+{{- if .Tickets }}
+<i>Tickets: </i><b>{{ len .Tickets }}</b> |{{ range .Tickets }} {{.Master}} |{{ end }}
+{{- end }}
