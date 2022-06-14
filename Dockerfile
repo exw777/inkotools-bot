@@ -13,6 +13,11 @@ FROM alpine
 
 RUN apk add --no-cache tzdata
 
+RUN mkdir /data/ && \
+    chown 1000:1000 /data/
+
+VOLUME ["/data"]
+
 CMD ["/inkotools-bot"]
 
 COPY templates /templates

@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/gob"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -27,36 +29,43 @@ const CFGFILE string = "config.yml"
 
 // Config struct
 type Config struct {
-	BotToken      string          `yaml:"bot_token"`
-	UseWebhook    bool            `yaml:"use_webhook"`
-	WebhookURL    string          `yaml:"webhook_url"`
-	ListenPort    string          `yaml:"listen_port"`
-	ReportChannel int64           `yaml:"report_channel"`
-	Admin         int64           `yaml:"admin"`
-	Users         map[int64]*User `yaml:"users"`
-	InkoToolsAPI  string          `yaml:"inkotools_api_url"`
-	GraydbURL     string          `yaml:"graydb_url"`
-	DebugMode     bool            `yaml:"debug"`
+	BotToken      string                `yaml:"bot_token"`
+	UseWebhook    bool                  `yaml:"use_webhook"`
+	WebhookURL    string                `yaml:"webhook_url"`
+	ListenPort    string                `yaml:"listen_port"`
+	ReportChannel int64                 `yaml:"report_channel"`
+	Admin         int64                 `yaml:"admin"`
+	Users         map[int64]*UserConfig `yaml:"users"`
+	InkoToolsAPI  string                `yaml:"inkotools_api_url"`
+	GraydbURL     string                `yaml:"graydb_url"`
+	DebugMode     bool                  `yaml:"debug"`
 }
 
-// User struct
-type User struct {
+// UserConfig struct
+type UserConfig struct {
 	Name            string `yaml:"name"`
-	Mode            string `yaml:"-"`
 	Token           string `yaml:"token"`
-	TMP             string `yaml:"-"` // to save temporary data between messages
 	Username        string `yaml:"-"` // not saved, returned from api by token
 	RefreshInterval string `yaml:"refresh_interval"`
 	NotifyNew       bool   `yaml:"notify_new"`
 	NotifyUpdate    bool   `yaml:"notify_update"`
-	Tickets         struct {
+}
+
+// UserData struct
+type UserData struct {
+	Mode    string // command mode
+	TMP     string // to save temporary data between messages
+	Tickets struct {
 		Data []Ticket `mapstructure:"data"`
 		Meta struct {
 			User string `mapstructure:"username"`
 		} `mapstructure:"meta"`
 		Updated time.Time
-	} `yaml:"-"`
+	}
 }
+
+// Data - data object
+var Data map[int64]*UserData
 
 // CFG - config object
 var CFG Config
@@ -610,6 +619,28 @@ func initBot() tgbotapi.UpdatesChannel {
 	}
 	// init pingers
 	Pingers = make(map[int64]ping.Pinger)
+	// init user data
+	Data = make(map[int64]*UserData)
+	for uid := range CFG.Users {
+		Data[uid] = &UserData{}
+	}
+	// load user data from files
+	d, err := os.Open("data")
+	if err != nil && os.IsNotExist(err) {
+		logWarning("[init] Creating new data directory")
+		os.Mkdir("data", 0755)
+		d, _ = os.Open("data")
+	}
+	dFiles, err := d.Readdir(0)
+	if err != nil {
+		logError(fmt.Sprintf("[init] Read data files failed: %v", err))
+	}
+	d.Close()
+	for _, v := range dFiles {
+		uid, _ := strconv.ParseInt(strings.TrimSuffix(v.Name(), ".gob"), 10, 64)
+		logDebug(fmt.Sprintf("[init] Loading data file: %s", v.Name()))
+		loadUserData(uid)
+	}
 	if CFG.UseWebhook {
 		// serve http
 		go http.ListenAndServe(":"+CFG.ListenPort, nil)
@@ -683,6 +714,42 @@ func saveConfig() error {
 	return nil
 }
 
+// save user data to file
+func saveUserData(uid int64) error {
+	f, err := os.Create(fmt.Sprintf("data/%d.gob", uid))
+	defer f.Close()
+	if err != nil {
+		logError(fmt.Sprintf("[save] Failed to open file: %v", err))
+		return err
+	}
+	encoder := gob.NewEncoder(f)
+	err = encoder.Encode(Data[uid])
+	if err != nil {
+		logError(fmt.Sprintf("[save] Failed to encode data: %v", err))
+		return err
+	}
+	return nil
+}
+
+// load user data from file
+func loadUserData(uid int64) error {
+	var d *UserData
+	f, err := os.Open(fmt.Sprintf("data/%d.gob", uid))
+	defer f.Close()
+	if err != nil {
+		logError(fmt.Sprintf("[load] Failed to open file: %v", err))
+		return err
+	}
+	decoder := gob.NewDecoder(f)
+	err = decoder.Decode(&d)
+	if err != nil {
+		logError(fmt.Sprintf("[load] Failed to decode data: %v", err))
+		return err
+	}
+	Data[uid] = d
+	return nil
+}
+
 // add/delete user
 func manageUser(args string, enabled bool) string {
 	u, name := splitArgs(args)
@@ -692,7 +759,8 @@ func manageUser(args string, enabled bool) string {
 	}
 	var msgUser, msgAdmin string
 	if enabled && !userIsAuthorized(uid) {
-		CFG.Users[uid] = &User{Name: name}
+		CFG.Users[uid] = &UserConfig{Name: name}
+		Data[uid] = &UserData{}
 		logInfo(fmt.Sprintf("[user] %d (%s) added", uid, CFG.Users[uid].Name))
 		msgUser = "You are added to authorized users list."
 		msgAdmin = fmt.Sprintf("User <code>%d</code> <b>%s</b> added.",
@@ -703,6 +771,7 @@ func manageUser(args string, enabled bool) string {
 		msgAdmin = fmt.Sprintf("User <code>%d</code> <b>%s</b> removed.",
 			uid, CFG.Users[uid].Name)
 		delete(CFG.Users, uid)
+		delete(Data, uid)
 	} else {
 		return "Nothing to do"
 	}
@@ -1499,13 +1568,13 @@ func configHandler(msg string, uid int64, msgID int) (string, tgbotapi.InlineKey
 	var kb tgbotapi.InlineKeyboardMarkup
 
 	// subcommands processing, msg - subcommand
-	if CFG.Users[uid].TMP == "" {
+	if Data[uid].TMP == "" {
 		switch msg {
 		case "login", "interval":
 			res = fmt.Sprintf("Enter new %s:", msg)
 			// change mode for user input and save tmp data
-			CFG.Users[uid].Mode = "config"
-			CFG.Users[uid].TMP = fmt.Sprintf("%d %s", msgID, msg)
+			Data[uid].Mode = "config"
+			Data[uid].TMP = fmt.Sprintf("%d %s", msgID, msg)
 		case "toggleNew":
 			CFG.Users[uid].NotifyNew = !CFG.Users[uid].NotifyNew
 		case "toggleUpdate":
@@ -1516,7 +1585,7 @@ func configHandler(msg string, uid int64, msgID int) (string, tgbotapi.InlineKey
 
 	} else { // input mode, msg - data entered by user
 		// unpack saved data
-		strID, savedData := splitArgs(CFG.Users[uid].TMP)
+		strID, savedData := splitArgs(Data[uid].TMP)
 		enteredKey, savedData := splitArgs(savedData)
 		oldMsgID, _ := strconv.Atoi(strID)
 		enteredValue := msg
@@ -1526,7 +1595,7 @@ func configHandler(msg string, uid int64, msgID int) (string, tgbotapi.InlineKey
 		case "login":
 			// save entered login to tmp and ask for password
 			res = "Enter password:"
-			CFG.Users[uid].TMP = fmt.Sprintf("%d password %s", msgID, enteredValue)
+			Data[uid].TMP = fmt.Sprintf("%d password %s", msgID, enteredValue)
 		case "password":
 			// try to get gray database token from api
 			resp, err := requestAPI("POST", "/gdb/user/get_token",
@@ -1537,16 +1606,16 @@ func configHandler(msg string, uid int64, msgID int) (string, tgbotapi.InlineKey
 			} else {
 				mapstructure.Decode(resp["data"].(map[string]interface{})["token"], &CFG.Users[uid].Token)
 			}
-			CFG.Users[uid].TMP = ""
+			Data[uid].TMP = ""
 		case "interval":
 			CFG.Users[uid].RefreshInterval = enteredValue
-			CFG.Users[uid].TMP = ""
+			Data[uid].TMP = ""
 		}
 	}
 
 	// restore mode on cleared tmp
-	if CFG.Users[uid].TMP == "" {
-		CFG.Users[uid].Mode = "raw"
+	if Data[uid].TMP == "" {
+		Data[uid].Mode = "raw"
 	}
 	// print config on empty res
 	if res == "" {
@@ -1598,23 +1667,25 @@ func printConfig(uid int64) (string, tgbotapi.InlineKeyboardMarkup) {
 // update user tickets cache
 func updateTickets(uid int64) error {
 	// clear cache before update
-	CFG.Users[uid].Tickets.Data = nil
+	Data[uid].Tickets.Data = nil
 	resp, err := requestAPI("GET", "/gdb/user/tickets", map[string]interface{}{"token": CFG.Users[uid].Token})
 	if err != nil {
 		return err
 	}
-	mapstructureDecode(resp, &CFG.Users[uid].Tickets)
-	for i, e := range CFG.Users[uid].Tickets.Data {
+	mapstructureDecode(resp, &Data[uid].Tickets)
+	for i, e := range Data[uid].Tickets.Data {
 		c := len(e.Comments)
 		if c > 0 {
-			CFG.Users[uid].Tickets.Data[i].Updated = e.Comments[c-1].Time
-			if e.Comments[c-1].Author != CFG.Users[uid].Tickets.Meta.User {
-				CFG.Users[uid].Tickets.Data[i].Modified = true
+			Data[uid].Tickets.Data[i].Updated = e.Comments[c-1].Time
+			if e.Comments[c-1].Author != Data[uid].Tickets.Meta.User {
+				Data[uid].Tickets.Data[i].Modified = true
 			}
 		}
 	}
-	CFG.Users[uid].Tickets.Updated = time.Now()
-	logDebug(fmt.Sprintf("Updated tickets: %+v", CFG.Users[uid].Tickets))
+	Data[uid].Tickets.Updated = time.Now()
+	logDebug(fmt.Sprintf("Updated tickets: %+v", Data[uid].Tickets))
+	// save data to file
+	saveUserData(uid)
 	return nil
 }
 
@@ -1628,14 +1699,14 @@ func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarku
 		return printLogin()
 	}
 	// update tickets cache on refresh and first run
-	if strings.Contains(cmd, "refresh") || cmd == "" || CFG.Users[uid].Tickets.Updated.IsZero() {
+	if strings.Contains(cmd, "refresh") || Data[uid].Tickets.Updated.IsZero() {
 		// trim cmd to prevent duplication in refresh button
 		cmd = strings.Replace(cmd, "refresh ", "", -1)
 		if err := updateTickets(uid); err != nil {
 			return fmtErr(err.Error()), kb
 		}
 	}
-	tickets := CFG.Users[uid].Tickets.Data
+	tickets := Data[uid].Tickets.Data
 	total := len(tickets)
 	if total == 0 {
 		res = "You have no tickets"
@@ -1692,7 +1763,7 @@ func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarku
 		{"refresh": fmt.Sprintf("tickets edit refresh %s", cmd)},
 		{"close": "close"},
 	})
-	res += printUpdated(CFG.Users[uid].Tickets.Updated)
+	res += printUpdated(Data[uid].Tickets.Updated)
 	kb = genKeyboard(buttons)
 	return res, kb
 }
@@ -1708,11 +1779,11 @@ func commentHandler(args string, uid int64, msgID int) (string, tgbotapi.InlineK
 		k := tgbotapi.NewReplyKeyboard(tgbotapi.NewKeyboardButtonRow(tgbotapi.NewKeyboardButton("cancel")))
 		m, _ := sendMessage(uid, "Enter new comment:", k)
 		// store temporary data and change mode
-		CFG.Users[uid].TMP = fmt.Sprintf("%d %d %s", msgID, m.MessageID, args)
-		CFG.Users[uid].Mode = "comment"
-	} else if CFG.Users[uid].TMP != "" {
+		Data[uid].TMP = fmt.Sprintf("%d %d %s", msgID, m.MessageID, args)
+		Data[uid].Mode = "comment"
+	} else if Data[uid].TMP != "" {
 		// unpack temporary data [initMsgID, promtMsgID, clientID, ticketID]
-		tmpData := strings.Split(CFG.Users[uid].TMP, " ")
+		tmpData := strings.Split(Data[uid].TMP, " ")
 		// delete previous two messages (init and prompt)
 		for i := 0; i <= 1; i++ {
 			m, _ := strconv.Atoi(tmpData[i])
@@ -1738,8 +1809,8 @@ func commentHandler(args string, uid int64, msgID int) (string, tgbotapi.InlineK
 			}
 		}
 		// clear tmp, restore mode, remove cancel button
-		CFG.Users[uid].TMP = ""
-		CFG.Users[uid].Mode = "raw"
+		Data[uid].TMP = ""
+		Data[uid].Mode = "raw"
 		clearReplyKeyboard(uid)
 	} else {
 		res = fmtErr("Wrong comment params")
@@ -1802,15 +1873,15 @@ func main() {
 				goto SEND
 			case "admin":
 				if uid == CFG.Admin {
-					CFG.Users[uid].Mode = "admin"
+					Data[uid].Mode = "admin"
 				} else {
 					res = fmtErr("You have no permissions to work in this mode.")
 					goto SEND
 				}
 			case "raw", "search", "ping", "calc", "comment", "config":
-				CFG.Users[uid].Mode = cmd
+				Data[uid].Mode = cmd
 			case "report":
-				CFG.Users[uid].Mode = cmd
+				Data[uid].Mode = cmd
 				res = "You are in report mode. " +
 					"Send message with your report, you can also attach screenshots or other media.\n" +
 					"To cancel and return to raw command mode, send /raw."
@@ -1828,7 +1899,7 @@ func main() {
 			}
 
 			// mode processing
-			switch CFG.Users[uid].Mode {
+			switch Data[uid].Mode {
 			case "admin":
 				res = adminHandler(msg)
 			case "report":
