@@ -6,6 +6,7 @@ require (
 	github.com/go-ping/ping v0.0.0-20211130115550-779d1e919534
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
 	github.com/mitchellh/mapstructure v1.4.3
+	github.com/robfig/cron/v3 v3.0.1
 	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b
 )
 

@@ -19,6 +19,7 @@ import (
 
 	"github.com/go-ping/ping"
 	"github.com/mitchellh/mapstructure"
+	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -47,6 +48,8 @@ type UserConfig struct {
 	Token           string `yaml:"token"`
 	Username        string `yaml:"-"` // not saved, returned from api by token
 	RefreshInterval string `yaml:"refresh_interval"`
+	RefreshStart    string `yaml:"refresh_start"`
+	RefreshStop     string `yaml:"refresh_stop"`
 	NotifyNew       bool   `yaml:"notify_new"`
 	NotifyUpdate    bool   `yaml:"notify_update"`
 }
@@ -55,14 +58,21 @@ type UserConfig struct {
 type UserData struct {
 	Mode    string // command mode
 	TMP     string // to save temporary data between messages
-	Tickets struct {
-		Data []Ticket `mapstructure:"data"`
-		Meta struct {
-			User string `mapstructure:"username"`
-		} `mapstructure:"meta"`
-		Updated time.Time
-	}
+	Cron    map[string]cron.EntryID
+	Tickets Tickets
 }
+
+// Tickets struct
+type Tickets struct {
+	Data []Ticket `mapstructure:"data"`
+	Meta struct {
+		User string `mapstructure:"username"`
+	} `mapstructure:"meta"`
+	Updated time.Time
+}
+
+// Cron - cron object
+var Cron *cron.Cron
 
 // Data - data object
 var Data map[int64]*UserData
@@ -582,6 +592,24 @@ func printUpdated(t time.Time) string {
 	return fmt.Sprintf("\n<i>Updated:</i> <code>%s</code>", t.Format("2006-01-02 15:04:05"))
 }
 
+// split string time to hour and minute
+func splitTime(srcTime string) (int, int) {
+	t, _ := time.Parse("15:04", srcTime)
+	return t.Hour(), t.Minute()
+}
+
+// check if current time is in interval
+func nowIsBetween(from string, to string) bool {
+	t := time.Now()
+	h, m := t.Hour(), t.Minute()
+	h1, m1 := splitTime(from)
+	h2, m2 := splitTime(to)
+	if (h1 < h || h1 == h && m1 <= m) && (h < h2 || h == h2 && m < m2) {
+		return true
+	}
+	return false
+}
+
 // MAIN FUNCTIONS
 
 // init telegram bot
@@ -622,7 +650,7 @@ func initBot() tgbotapi.UpdatesChannel {
 	// init user data
 	Data = make(map[int64]*UserData)
 	for uid := range CFG.Users {
-		Data[uid] = &UserData{}
+		initUserData(uid)
 	}
 	// load user data from files
 	d, err := os.Open("data")
@@ -641,6 +669,17 @@ func initBot() tgbotapi.UpdatesChannel {
 		logDebug(fmt.Sprintf("[init] Loading data file: %s", v.Name()))
 		loadUserData(uid)
 	}
+	// init cron
+	Cron = cron.New()
+	for uid := range CFG.Users {
+		// enable cron only for authorized in gray database
+		if CFG.Users[uid].Token != "" {
+			for key := range Data[uid].Cron {
+				updateCronEntry(uid, key)
+			}
+		}
+	}
+	Cron.Start()
 	if CFG.UseWebhook {
 		// serve http
 		go http.ListenAndServe(":"+CFG.ListenPort, nil)
@@ -654,6 +693,12 @@ func initBot() tgbotapi.UpdatesChannel {
 		logInfo("[init] Start polling")
 	}
 	return updates
+}
+
+// init empty user data
+func initUserData(uid int64) {
+	Data[uid] = &UserData{}
+	Data[uid].Cron = map[string]cron.EntryID{"job": 0, "start": 0, "stop": 0}
 }
 
 // load config from file
@@ -697,6 +742,19 @@ func loadConfig() error {
 
 // write config to file
 func saveConfig() error {
+	// set default values
+	for i, e := range CFG.Users {
+		if e.RefreshInterval == "" {
+			CFG.Users[i].RefreshInterval = "15m"
+		}
+		if e.RefreshStart == "" {
+			CFG.Users[i].RefreshStart = "09:00"
+		}
+		if e.RefreshStop == "" {
+			CFG.Users[i].RefreshStop = "20:00"
+		}
+	}
+	// encode to yaml
 	data, err := yaml.Marshal(&CFG)
 	if err != nil {
 		logError(fmt.Sprintf("[config] YAML marshal failed: %v", err))
@@ -714,7 +772,7 @@ func saveConfig() error {
 	return nil
 }
 
-// save user data to file
+// save user data to file (only tickets)
 func saveUserData(uid int64) error {
 	f, err := os.Create(fmt.Sprintf("data/%d.gob", uid))
 	defer f.Close()
@@ -723,7 +781,7 @@ func saveUserData(uid int64) error {
 		return err
 	}
 	encoder := gob.NewEncoder(f)
-	err = encoder.Encode(Data[uid])
+	err = encoder.Encode(Data[uid].Tickets)
 	if err != nil {
 		logError(fmt.Sprintf("[save] Failed to encode data: %v", err))
 		return err
@@ -731,9 +789,9 @@ func saveUserData(uid int64) error {
 	return nil
 }
 
-// load user data from file
+// load user data from file (only tickets)
 func loadUserData(uid int64) error {
-	var d *UserData
+	var d Tickets
 	f, err := os.Open(fmt.Sprintf("data/%d.gob", uid))
 	defer f.Close()
 	if err != nil {
@@ -746,7 +804,7 @@ func loadUserData(uid int64) error {
 		logError(fmt.Sprintf("[load] Failed to decode data: %v", err))
 		return err
 	}
-	Data[uid] = d
+	Data[uid].Tickets = d
 	return nil
 }
 
@@ -760,7 +818,7 @@ func manageUser(args string, enabled bool) string {
 	var msgUser, msgAdmin string
 	if enabled && !userIsAuthorized(uid) {
 		CFG.Users[uid] = &UserConfig{Name: name}
-		Data[uid] = &UserData{}
+		initUserData(uid)
 		logInfo(fmt.Sprintf("[user] %d (%s) added", uid, CFG.Users[uid].Name))
 		msgUser = "You are added to authorized users list."
 		msgAdmin = fmt.Sprintf("User <code>%d</code> <b>%s</b> added.",
@@ -902,6 +960,13 @@ func editTextAndKeyboard(m *tgbotapi.Message, txt string, kb tgbotapi.InlineKeyb
 func sendTo(id int64, text string) (tgbotapi.Message, error) {
 	empty := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
 	return sendMessage(id, text, empty)
+}
+
+// shortcut for text message with close button
+func sendAlert(id int64, text string) (tgbotapi.Message, error) {
+	return sendMessage(id, text,
+		genKeyboard([][]map[string]string{{{"close": "close"}}}),
+	)
 }
 
 // broadcast message to all users
@@ -1570,8 +1635,8 @@ func configHandler(msg string, uid int64, msgID int) (string, tgbotapi.InlineKey
 	// subcommands processing, msg - subcommand
 	if Data[uid].TMP == "" {
 		switch msg {
-		case "login", "interval":
-			res = fmt.Sprintf("Enter new %s:", msg)
+		case "login", "interval", "from", "to":
+			res = fmt.Sprintf("Enter new '%s' value:", msg)
 			// change mode for user input and save tmp data
 			Data[uid].Mode = "config"
 			Data[uid].TMP = fmt.Sprintf("%d %s", msgID, msg)
@@ -1608,7 +1673,29 @@ func configHandler(msg string, uid int64, msgID int) (string, tgbotapi.InlineKey
 			}
 			Data[uid].TMP = ""
 		case "interval":
-			CFG.Users[uid].RefreshInterval = enteredValue
+			if dt, err := time.ParseDuration(enteredValue); err != nil {
+				sendAlert(uid, "Invalid duration format")
+			} else if dt < time.Minute {
+				sendAlert(uid, "Duration is less than 1m")
+			} else {
+				CFG.Users[uid].RefreshInterval = enteredValue
+				updateCronJob(uid)
+			}
+			Data[uid].TMP = ""
+		case "from", "to":
+			if _, err := time.Parse("15:04", enteredValue); err != nil {
+				sendAlert(uid, "Invalid time format, use <code>HH:MM</code>")
+			} else {
+				if enteredKey == "from" {
+					CFG.Users[uid].RefreshStart = enteredValue
+					updateCronEntry(uid, "start")
+				} else {
+					CFG.Users[uid].RefreshStop = enteredValue
+					updateCronEntry(uid, "stop")
+				}
+				// update job because working time could be changed
+				updateCronJob(uid)
+			}
 			Data[uid].TMP = ""
 		}
 	}
@@ -1653,6 +1740,9 @@ func printConfig(uid int64) (string, tgbotapi.InlineKeyboardMarkup) {
 			{"edit interval": "config edit interval"},
 		},
 		{
+			{"edit from": "config edit from"},
+			{"edit to": "config edit to"},
+		}, {
 			{"toggle New": "config edit toggleNew"},
 			{"toggle Update": "config edit toggleUpdate"},
 		},
@@ -1662,6 +1752,56 @@ func printConfig(uid int64) (string, tgbotapi.InlineKeyboardMarkup) {
 		},
 	})
 	return res, kb
+}
+
+// update cron entry
+func updateCronEntry(uid int64, key string) {
+	var s string
+	var f func()
+	// remove old entry
+	removeCronEntry(uid, key)
+	switch key {
+	case "job":
+		s = fmt.Sprintf("@every %s", CFG.Users[uid].RefreshInterval)
+		f = func() { updateTickets(uid) }
+	case "start":
+		h, m := splitTime(CFG.Users[uid].RefreshStart)
+		s = fmt.Sprintf("%d %d * * *", m, h)
+		f = func() { updateCronJob(uid) }
+	case "stop":
+		h, m := splitTime(CFG.Users[uid].RefreshStop)
+		s = fmt.Sprintf("%d %d * * *", m, h)
+		f = func() { removeCronEntry(uid, "job") }
+	}
+	id, err := Cron.AddFunc(s, f)
+	if err != nil {
+		logError(fmt.Sprintf("[cron] [%d] failed to add %s entry: %v", uid, key, err))
+	} else {
+		Data[uid].Cron[key] = id
+		logInfo(fmt.Sprintf("[cron] [%d] added %s entry %d", uid, key, id))
+		// run job immediately after adding
+		if key == "job" {
+			go Cron.Entry(id).Job.Run()
+		}
+	}
+}
+
+// remove cron entry
+func removeCronEntry(uid int64, key string) {
+	id := Data[uid].Cron[key]
+	if Cron.Entry(id).Valid() {
+		Cron.Remove(id)
+		logInfo(fmt.Sprintf("[cron] [%d] removed %s entry %d", uid, key, id))
+	}
+}
+
+// update user job
+func updateCronJob(uid int64) {
+	if nowIsBetween(CFG.Users[uid].RefreshStart, CFG.Users[uid].RefreshStop) {
+		updateCronEntry(uid, "job")
+	} else {
+		logWarning(fmt.Sprintf("[cron] [%d] job skipped due to working time range", uid))
+	}
 }
 
 // update user tickets cache
