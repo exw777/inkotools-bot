@@ -674,9 +674,9 @@ func initBot() tgbotapi.UpdatesChannel {
 	for uid := range CFG.Users {
 		// enable cron only for authorized in gray database
 		if CFG.Users[uid].Token != "" {
-			for key := range Data[uid].Cron {
-				updateCronEntry(uid, key)
-			}
+			updateCronJob(uid)
+			updateCronEntry(uid, "start")
+			updateCronEntry(uid, "stop")
 		}
 	}
 	Cron.Start()
@@ -1779,10 +1779,6 @@ func updateCronEntry(uid int64, key string) {
 	} else {
 		Data[uid].Cron[key] = id
 		logInfo(fmt.Sprintf("[cron] [%d] added %s entry %d", uid, key, id))
-		// run job immediately after adding
-		if key == "job" {
-			go Cron.Entry(id).Job.Run()
-		}
 	}
 }
 
@@ -1799,6 +1795,8 @@ func removeCronEntry(uid int64, key string) {
 func updateCronJob(uid int64) {
 	if nowIsBetween(CFG.Users[uid].RefreshStart, CFG.Users[uid].RefreshStop) {
 		updateCronEntry(uid, "job")
+		// run job immediately after adding
+		go Cron.Entry(Data[uid].Cron["job"]).Job.Run()
 	} else {
 		logWarning(fmt.Sprintf("[cron] [%d] job skipped due to working time range", uid))
 	}
