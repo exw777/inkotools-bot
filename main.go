@@ -306,7 +306,6 @@ type Ticket struct {
 	Name       string          `mapstructure:"name"`
 	Address    string          `mapstructure:"address"`
 	Contacts   []string        `mapstructure:"contacts"`
-	Updated    time.Time
 	Modified   bool
 }
 
@@ -1775,10 +1774,10 @@ func updateCronEntry(uid int64, key string) {
 	}
 	id, err := Cron.AddFunc(s, f)
 	if err != nil {
-		logError(fmt.Sprintf("[cron] [%d] failed to add %s entry: %v", uid, key, err))
+		logError(fmt.Sprintf("[cron] [%s] failed to add %s entry: %v", CFG.Users[uid].Name, key, err))
 	} else {
 		Data[uid].Cron[key] = id
-		logInfo(fmt.Sprintf("[cron] [%d] added %s entry %s [%d]", uid, key, s, id))
+		logInfo(fmt.Sprintf("[cron] [%s] added %s entry %s [%d]", CFG.Users[uid].Name, key, s, id))
 	}
 }
 
@@ -1787,7 +1786,7 @@ func removeCronEntry(uid int64, key string) {
 	id := Data[uid].Cron[key]
 	if Cron.Entry(id).Valid() {
 		Cron.Remove(id)
-		logInfo(fmt.Sprintf("[cron] [%d] removed %s entry [%d]", uid, key, id))
+		logInfo(fmt.Sprintf("[cron] [%s] removed %s entry [%d]", CFG.Users[uid].Name, key, id))
 	}
 }
 
@@ -1798,7 +1797,7 @@ func updateCronJob(uid int64) {
 		// run job immediately after adding
 		go Cron.Entry(Data[uid].Cron["job"]).Job.Run()
 	} else {
-		logWarning(fmt.Sprintf("[cron] [%d] job skipped due to working time range", uid))
+		logWarning(fmt.Sprintf("[cron] [%s] job skipped due to working time range", CFG.Users[uid].Name))
 	}
 }
 
@@ -1808,20 +1807,45 @@ func updateTickets(uid int64) error {
 	if err != nil {
 		return err
 	}
+	// save old tickets to compare with updated
+	oldTickets := make(map[int][]TicketComment)
+	for _, e := range Data[uid].Tickets.Data {
+		oldTickets[e.TicketID] = e.Comments
+	}
 	// clear cache before update
 	Data[uid].Tickets.Data = nil
 	mapstructureDecode(resp, &Data[uid].Tickets)
+	// scan changes
 	for i, e := range Data[uid].Tickets.Data {
-		c := len(e.Comments)
-		if c > 0 {
-			Data[uid].Tickets.Data[i].Updated = e.Comments[c-1].Time
-			if e.Comments[c-1].Author != Data[uid].Tickets.Meta.User {
-				Data[uid].Tickets.Data[i].Modified = true
+		isModified := false
+		if _, ok := oldTickets[e.TicketID]; !ok {
+			// new ticket notification
+			isModified = true
+			logInfo(fmt.Sprintf("[tickets] [%s] New ticket: %s/%d", CFG.Users[uid].Name, e.ContractID, e.TicketID))
+			if CFG.Users[uid].NotifyNew {
+				sendAlert(uid, fmtObj(e, "ticket.user.tmpl"))
 			}
 		}
+		c := len(e.Comments)
+		if c > 0 {
+			// check comments
+			lastComment := e.Comments[c-1]
+			if lastComment.Author != Data[uid].Tickets.Meta.User {
+				if c > len(oldTickets[e.TicketID]) && !isModified {
+					// new comment notification (only for old tickets)
+					logInfo(fmt.Sprintf("[tickets] [%s] %s commented %s/%d: %s",
+						CFG.Users[uid].Name, lastComment.Author, e.ContractID, e.TicketID, lastComment.Comment))
+					if CFG.Users[uid].NotifyUpdate {
+						m := fmt.Sprintf("%s commented /%s: %s", lastComment.Author, e.ContractID, lastComment.Comment)
+						sendAlert(uid, m)
+					}
+				}
+				isModified = true
+			}
+		}
+		Data[uid].Tickets.Data[i].Modified = isModified
 	}
 	Data[uid].Tickets.Updated = time.Now()
-	// logDebug(fmt.Sprintf("Updated tickets: %+v", Data[uid].Tickets))
 	// save data to file
 	saveUserData(uid)
 	return nil
@@ -1839,7 +1863,8 @@ func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarku
 	// update tickets cache on refresh and first run
 	if strings.Contains(cmd, "refresh") || Data[uid].Tickets.Updated.IsZero() {
 		// trim cmd to prevent duplication in refresh button
-		cmd = strings.Replace(cmd, "refresh ", "", -1)
+		re, _ := regexp.Compile(`refresh ?`)
+		cmd = re.ReplaceAllString(cmd, "")
 		if err := updateTickets(uid); err != nil {
 			return fmtErr(err.Error()), kb
 		}
