@@ -1900,11 +1900,6 @@ func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarku
 			})
 		} else {
 			res = fmtObj(tickets, "ticket.list.tmpl")
-			// if message too long, try short template
-			if len(res) > 4000 {
-				res = fmtObj(tickets, "ticket.list.short.tmpl")
-				logWarning(fmt.Sprintf("Using short tickets template, len: %d", len(res)))
-			}
 			// generate index buttons
 			var row []map[string]string
 			for i := 1; i <= total; i++ {
