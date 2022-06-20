@@ -1778,7 +1778,7 @@ func updateCronEntry(uid int64, key string) {
 		logError(fmt.Sprintf("[cron] [%d] failed to add %s entry: %v", uid, key, err))
 	} else {
 		Data[uid].Cron[key] = id
-		logInfo(fmt.Sprintf("[cron] [%d] added %s entry %d", uid, key, id))
+		logInfo(fmt.Sprintf("[cron] [%d] added %s entry %s [%d]", uid, key, s, id))
 	}
 }
 
@@ -1787,7 +1787,7 @@ func removeCronEntry(uid int64, key string) {
 	id := Data[uid].Cron[key]
 	if Cron.Entry(id).Valid() {
 		Cron.Remove(id)
-		logInfo(fmt.Sprintf("[cron] [%d] removed %s entry %d", uid, key, id))
+		logInfo(fmt.Sprintf("[cron] [%d] removed %s entry [%d]", uid, key, id))
 	}
 }
 
@@ -1804,12 +1804,12 @@ func updateCronJob(uid int64) {
 
 // update user tickets cache
 func updateTickets(uid int64) error {
-	// clear cache before update
-	Data[uid].Tickets.Data = nil
 	resp, err := requestAPI("GET", "/gdb/user/tickets", map[string]interface{}{"token": CFG.Users[uid].Token})
 	if err != nil {
 		return err
 	}
+	// clear cache before update
+	Data[uid].Tickets.Data = nil
 	mapstructureDecode(resp, &Data[uid].Tickets)
 	for i, e := range Data[uid].Tickets.Data {
 		c := len(e.Comments)
@@ -1821,7 +1821,7 @@ func updateTickets(uid int64) error {
 		}
 	}
 	Data[uid].Tickets.Updated = time.Now()
-	logDebug(fmt.Sprintf("Updated tickets: %+v", Data[uid].Tickets))
+	// logDebug(fmt.Sprintf("Updated tickets: %+v", Data[uid].Tickets))
 	// save data to file
 	saveUserData(uid)
 	return nil
@@ -1907,6 +1907,21 @@ func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarku
 }
 
 // add comment to ticket
+func addComment(uid int64, contract string, ticket string, comment string) {
+	_, err := requestAPI("POST",
+		fmt.Sprintf("/gdb/%s/tickets/%s", contract, ticket),
+		map[string]interface{}{
+			"token":   CFG.Users[uid].Token,
+			"comment": comment,
+		})
+	if err != nil {
+		sendAlert(uid, fmtErr(err.Error()))
+	} else {
+		go updateTickets(uid)
+	}
+}
+
+// add comment handler
 func commentHandler(args string, uid int64, msgID int) (string, tgbotapi.InlineKeyboardMarkup) {
 	var res string
 	var kb tgbotapi.InlineKeyboardMarkup
@@ -1927,29 +1942,15 @@ func commentHandler(args string, uid int64, msgID int) (string, tgbotapi.InlineK
 			m, _ := strconv.Atoi(tmpData[i])
 			Bot.Request(tgbotapi.NewDeleteMessage(uid, m))
 		}
-		if args == "cancel" {
-			// on cancel return to tickets list
-			res, kb = ticketsHandler("list", uid)
-		} else {
+		if args != "cancel" {
 			// add new comment
-			_, err := requestAPI("POST",
-				fmt.Sprintf("/gdb/%s/tickets/%s", tmpData[2], tmpData[3]),
-				map[string]interface{}{
-					"token":   CFG.Users[uid].Token,
-					"comment": args,
-				})
-			if err != nil {
-				res = fmtErr(err.Error())
-				kb = genKeyboard([][]map[string]string{{{"close": "close"}}})
-			} else {
-				updateTickets(uid)
-				res, kb = clientHandler(tmpData[2], "tickets")
-			}
+			go addComment(uid, tmpData[2], tmpData[3], args)
 		}
-		// clear tmp, restore mode, remove cancel button
+		// clear tmp, restore mode, remove cancel button, return to tickets list
 		Data[uid].TMP = ""
 		Data[uid].Mode = "raw"
 		clearReplyKeyboard(uid)
+		res, kb = ticketsHandler("list", uid)
 	} else {
 		res = fmtErr("Wrong comment params")
 		kb = genKeyboard([][]map[string]string{{{"close": "close"}}})
