@@ -1836,8 +1836,8 @@ func updateTickets(uid int64) error {
 					logInfo(fmt.Sprintf("[tickets] [%s] %s commented %s/%d: %s",
 						CFG.Users[uid].Name, lastComment.Author, e.ContractID, e.TicketID, lastComment.Comment))
 					if CFG.Users[uid].NotifyUpdate {
-						m := fmt.Sprintf("%s commented /%s: %s", lastComment.Author, e.ContractID, lastComment.Comment)
-						sendAlert(uid, m)
+						sendAlert(uid, fmt.Sprintf("/%s %s\n%s: %s",
+							e.ContractID, e.Address, lastComment.Author, lastComment.Comment))
 					}
 				}
 				isModified = true
