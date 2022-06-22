@@ -1862,7 +1862,7 @@ func updateTickets(uid int64) error {
 						CFG.Users[uid].Name, lastComment.Author, e.ContractID, e.TicketID, lastComment.Comment))
 					if CFG.Users[uid].NotifyUpdate {
 						sendAlert(uid, fmt.Sprintf("/%s %s\n%s: %s",
-							e.ContractID, e.Address, lastComment.Author, lastComment.Comment))
+							e.ContractID, fmtAddress(e.Address), lastComment.Author, lastComment.Comment))
 					}
 				}
 				isModified = true
