@@ -1,5 +1,7 @@
 <b>Logged as: </b><code>{{ .Username }}</code>
-<i>Tickets Refresh Interval: </i>
+<i>Tickets Refresh Interval: </i><code>{{ fmtState .RefreshEnabled }}</code>
+{{- if .RefreshEnabled }}
 Every <code>{{ .RefreshInterval }}</code> from <code>{{ .RefreshStart }}</code> to <code>{{ .RefreshStop }}</code>
-<i>Notify on new tickets: </i><code>{{ .NotifyNew }}</code>
-<i>Notify on tickets updates: </i><code>{{ .NotifyUpdate }}</code>
+<i>Notify on new tickets: </i><code>{{ fmtState .NotifyNew }}</code>
+<i>Notify on tickets updates: </i><code>{{ fmtState .NotifyUpdate }}</code>
+{{- end }}

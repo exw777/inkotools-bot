@@ -48,6 +48,7 @@ type UserConfig struct {
 	Name            string `yaml:"name"`
 	Token           string `yaml:"token"`
 	Username        string `yaml:"-"` // not saved, returned from api by token
+	RefreshEnabled  bool   `yaml:"refresh_enabled"`
 	RefreshInterval string `yaml:"refresh_interval"`
 	RefreshStart    string `yaml:"refresh_start"`
 	RefreshStop     string `yaml:"refresh_stop"`
@@ -672,11 +673,9 @@ func initBot() tgbotapi.UpdatesChannel {
 	// init cron
 	Cron = cron.New()
 	for uid := range CFG.Users {
-		// enable cron only for authorized in gray database
+		// init cron only for authorized in gray database users
 		if CFG.Users[uid].Token != "" {
-			updateCronJob(uid)
-			updateCronEntry(uid, "start")
-			updateCronEntry(uid, "stop")
+			initUserCron(uid)
 		}
 	}
 	Cron.Start()
@@ -693,6 +692,19 @@ func initBot() tgbotapi.UpdatesChannel {
 		logInfo("[init] Start polling")
 	}
 	return updates
+}
+
+// init user cron
+func initUserCron(uid int64) {
+	if CFG.Users[uid].RefreshEnabled {
+		updateCronJob(uid)
+		updateCronEntry(uid, "start")
+		updateCronEntry(uid, "stop")
+	} else {
+		for key := range Data[uid].Cron {
+			removeCronEntry(uid, key)
+		}
+	}
 }
 
 // init empty user data
@@ -1640,6 +1652,9 @@ func configHandler(msg string, uid int64, msgID int) (string, tgbotapi.InlineKey
 			// change mode for user input and save tmp data
 			Data[uid].Mode = "config"
 			Data[uid].TMP = fmt.Sprintf("%d %s", msgID, msg)
+		case "toggleRefresh":
+			CFG.Users[uid].RefreshEnabled = !CFG.Users[uid].RefreshEnabled
+			initUserCron(uid)
 		case "toggleNew":
 			CFG.Users[uid].NotifyNew = !CFG.Users[uid].NotifyNew
 		case "toggleUpdate":
@@ -1734,23 +1749,29 @@ func printConfig(uid int64) (string, tgbotapi.InlineKeyboardMarkup) {
 		mapstructure.Decode(resp["data"].(map[string]interface{})["username"], &CFG.Users[uid].Username)
 	}
 	res = fmtObj(CFG.Users[uid], "config.tmpl")
-	kb = genKeyboard([][]map[string]string{
-		{
-			{"edit credentials": "config edit login"},
-			{"edit interval": "config edit interval"},
-		},
-		{
-			{"edit from": "config edit from"},
-			{"edit to": "config edit to"},
-		}, {
-			{"toggle New": "config edit toggleNew"},
-			{"toggle Update": "config edit toggleUpdate"},
-		},
-		{
-			{"save": "config edit save"},
-			{"close": "close"},
-		},
+	buttons := [][]map[string]string{{{"edit credentials": "config edit login"}}}
+	if CFG.Users[uid].RefreshEnabled {
+		buttons = append(buttons,
+			[]map[string]string{
+				{"disable refresh": "config edit toggleRefresh"},
+				{"edit interval": "config edit interval"},
+			},
+			[]map[string]string{
+				{"edit from": "config edit from"},
+				{"edit to": "config edit to"},
+			}, []map[string]string{
+				{"toggle New": "config edit toggleNew"},
+				{"toggle Update": "config edit toggleUpdate"},
+			},
+		)
+	} else {
+		buttons = append(buttons, []map[string]string{{"enable refresh": "config edit toggleRefresh"}})
+	}
+	buttons = append(buttons, []map[string]string{
+		{"save": "config edit save"},
+		{"close": "close"},
 	})
+	kb = genKeyboard(buttons)
 	return res, kb
 }
 
