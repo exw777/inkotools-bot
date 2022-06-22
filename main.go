@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"regexp"
@@ -1761,7 +1762,10 @@ func updateCronEntry(uid int64, key string) {
 	removeCronEntry(uid, key)
 	switch key {
 	case "job":
-		s = fmt.Sprintf("@every %s", CFG.Users[uid].RefreshInterval)
+		// set random interval +/- 15s from original
+		t, _ := time.ParseDuration(CFG.Users[uid].RefreshInterval)
+		t += time.Duration(rand.Intn(30)-15) * time.Second
+		s = fmt.Sprintf("@every %s", t)
 		f = func() { updateTickets(uid) }
 	case "start":
 		h, m := splitTime(CFG.Users[uid].RefreshStart)
