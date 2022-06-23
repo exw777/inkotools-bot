@@ -3,12 +3,14 @@
 {{- if .ID }}
 
 <b>Internet</b> {{- template "account" . }}
+<i>Speed: </i><code>{{ .Speed }}</code>
 {{- if .Tariff }}
 <i>Tariff: </i><code>{{ .Tariff }}</code>
 {{- end }}
 {{- range .IPs }}
 <code>{{ . }}</code>
 {{- end }}
+{{- template "services" . }}
 {{- end }}
 {{- end }}
 {{- with .Billing.Tel }}
@@ -18,6 +20,7 @@
 {{- range .Numbers }}
 <code>{{ . }}</code>
 {{- end }}
+{{- template "services" . }}
 {{- end }}
 {{- end }}
 {{- with .Billing.LDTel }}
@@ -27,6 +30,7 @@
 {{- range .Numbers }}
 <code>{{ . }}</code>
 {{- end }}
+{{- template "services" . }}
 {{- end }}
 {{- end }}
 {{- with .Billing.TV }}
@@ -34,12 +38,15 @@
 
 <b>TV</b>
 {{- template "account" . }}
+{{- template "services" . }}
 {{- end }}
 {{- end }}
 
 {{- define "account" }} [<code>{{ .ID }}</code>] 
 {{- if not .Enabled }} &#9888; <b>blocked</b>{{ end }}
 <i>Balance: </i><code>{{ .Balance }}</code> <i>Credit: </i><code>{{ .Credit }}</code>
+{{- end }}
+{{- define "services" }}
 {{- if .Services }}
 <i>Services:</i>
 {{- range .Services }}

@@ -289,6 +289,7 @@ type InetAccount struct {
 	BillingAccount `mapstructure:",squash"`
 	Tariff         string   `mapstructure:"tariff"`
 	IPs            []string `mapstructure:"ip_list"`
+	Speed          string   `mapstructure:"speed"`
 }
 
 // TelAccount type
