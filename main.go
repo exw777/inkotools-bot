@@ -1870,7 +1870,12 @@ func updateTickets(uid int64) error {
 			isModified = true
 			logInfo(fmt.Sprintf("[tickets] [%s] New ticket: %s/%d", Users[uid].Name, e.ContractID, e.TicketID))
 			if Users[uid].NotifyNew {
-				sendAlert(uid, fmtObj(e, "ticket.user.tmpl"))
+				res := fmtObj(e, "ticket.user.tmpl")
+				kb := genKeyboard([][]map[string]string{{
+					{"add comment": fmt.Sprintf("comment edit %s %d", e.ContractID, e.TicketID)},
+					{"close": "close"},
+				}})
+				sendMessage(uid, res, kb)
 			}
 		}
 		c := len(e.Comments)
@@ -1883,8 +1888,13 @@ func updateTickets(uid int64) error {
 					logInfo(fmt.Sprintf("[tickets] [%s] %s commented %s/%d: %s",
 						Users[uid].Name, lastComment.Author, e.ContractID, e.TicketID, lastComment.Comment))
 					if Users[uid].NotifyUpdate {
-						sendAlert(uid, fmt.Sprintf("/%s %s\n%s: %s",
-							e.ContractID, fmtAddress(e.Address), lastComment.Author, lastComment.Comment))
+						res := fmt.Sprintf("/%s %s\n%s: %s",
+							e.ContractID, fmtAddress(e.Address), lastComment.Author, lastComment.Comment)
+						kb := genKeyboard([][]map[string]string{{
+							{"add comment": fmt.Sprintf("comment edit %s %d", e.ContractID, e.TicketID)},
+							{"close": "close"},
+						}})
+						sendMessage(uid, res, kb)
 					}
 				}
 				isModified = true
