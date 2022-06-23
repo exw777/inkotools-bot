@@ -1518,7 +1518,7 @@ func clientHandler(client string, args string) (string, tgbotapi.InlineKeyboardM
 				kb.InlineKeyboard = append(kb.InlineKeyboard,
 					tgbotapi.NewInlineKeyboardRow(
 						tgbotapi.NewInlineKeyboardButtonData(
-							fmt.Sprintf(" [%d] add comment (%s)", i+1, ticket.Master),
+							fmt.Sprintf(" add comment [%d] (%s)", i+1, ticket.Master),
 							fmt.Sprintf("comment edit %s %d", cData.ContractID, ticket.TicketID),
 						),
 					),
