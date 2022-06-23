@@ -30,15 +30,14 @@ const CFGFILE string = "config/main.yml"
 
 // Config struct
 type Config struct {
-	BotToken      string `yaml:"bot_token"`
-	UseWebhook    bool   `yaml:"use_webhook"`
-	WebhookURL    string `yaml:"webhook_url"`
-	ListenPort    string `yaml:"listen_port"`
-	ReportChannel int64  `yaml:"report_channel"`
-	Admin         int64  `yaml:"admin"`
-	InkoToolsAPI  string `yaml:"inkotools_api_url"`
-	GraydbURL     string `yaml:"graydb_url"`
-	DebugMode     bool   `yaml:"debug"`
+	BotToken     string `yaml:"bot_token"`
+	UseWebhook   bool   `yaml:"use_webhook"`
+	WebhookURL   string `yaml:"webhook_url"`
+	ListenPort   string `yaml:"listen_port"`
+	Admin        int64  `yaml:"admin"`
+	InkoToolsAPI string `yaml:"inkotools_api_url"`
+	GraydbURL    string `yaml:"graydb_url"`
+	DebugMode    bool   `yaml:"debug"`
 }
 
 // UserConfig struct
@@ -346,20 +345,8 @@ const ColorWhite string = "\033[37m"
 
 // HELPUSER - help string for user
 const HELPUSER string = `
-<b>Available commands:</b>
-/help - print this help
-/raw [args] - switch to raw command mode (default)
-/report [args] - switch to feedback mode
-/search [args] - switch to search mode
-/ping [args] - switch to ping mode
-/calc [args] - switch to ip calc mode
-/config [args] - switch to config mode
-/tickets - show tickets from gray database
-
-<code>args</code> - optional commands, which can be executed immediately, like you are already in this mode.
-
-<b>Raw mode (default)</b>
-In this mode bot try to parse raw commands:
+<b>Raw parsing</b>
+By default bot try to parse raw input:
 
 <code>{CLIENT_IP|CONTRACT_ID}</code> - get client summary from gray database
 
@@ -369,29 +356,21 @@ In this mode bot try to parse raw commands:
 
 <code>full/short</code> - switch between full and short port summary
 <code>refresh</code> - update information in the same message
-<code>clear</code> - clear port counters and refresh
 <code>repeat</code> - send new message with updated information
+<code>clear</code> - clear port counters and refresh
 
 <b><i>IP</i></b> can be in short or full format (e.g. <code>59.75</code> and <code>192.168.59.75</code> are equal)
 For client's public ip you must specify address in full format.
 
-<b>Report mode</b>
-In this mode you can send bug reports or suggestions.
-All messages will be redirected to special reports channel. You can also send screenshots or other media.
-
-<b>Search mode</b>
-In this mode you can search switches by mac, model or location.
+Otherwise, the input is interpreted as a search query. You can search switches by mac, model or location.
 Results will be paginated. Use callback buttons to navigate between pages: first, previous, next, last. 
 
-<b>Ping mode</b>
-In this mode you can ping different hosts.
-Only one host at time. If you send a new host, previous pinger will be stopped.
-
-<b>IP calc mode</b>
-In this mode you can get client ip address summary (ip, mask, gateway, prefix)
-
-<b>Config mode</b>
-In this mode you can change user settings, e.g. database credentials.
+<b>Available commands:</b>
+<code>/help</code> - print this help
+<code>/config</code> - edit user settings
+<code>/tickets</code> - show tickets from gray database
+<code>/ping HOST</code> - ping host
+<code>/calc IP</code> - ip calculator (ip, mask, gateway, prefix)
 
 `
 
@@ -412,32 +391,12 @@ var BotCommands = []tgbotapi.BotCommand{
 		Description: "show gray database tickets",
 	},
 	{
-		Command:     "raw",
-		Description: "switch to raw command mode (default)",
-	},
-	{
-		Command:     "search",
-		Description: "switch to search mode",
-	},
-	{
-		Command:     "ping",
-		Description: "switch to ping mode",
-	},
-	{
-		Command:     "calc",
-		Description: "switch to ip calc mode",
-	},
-	{
 		Command:     "config",
-		Description: "switch to config mode",
+		Description: "edit user settings",
 	},
 	{
 		Command:     "help",
 		Description: "print help",
-	},
-	{
-		Command:     "report",
-		Description: "switch to feedback mode",
 	},
 }
 
@@ -554,7 +513,7 @@ func fmtPhone(s string) string {
 
 // format address for short template
 func fmtAddress(s string) string {
-	re, _ := regexp.Compile(`Коломна |ул\. |д\. |п\. \d+ |э\. \d+ |офис/цех\. `)
+	re, _ := regexp.Compile(`Коломна |ул\. |д\. |п\. \d+ |э\. \d+ |офис/цех\. | 0`)
 	return re.ReplaceAllString(s, "")
 }
 
@@ -979,6 +938,11 @@ func genKeyboard(matrix [][]map[string]string) tgbotapi.InlineKeyboardMarkup {
 	}
 }
 
+// shortcut for keyboard with one close button
+func closeButton() tgbotapi.InlineKeyboardMarkup {
+	return genKeyboard([][]map[string]string{{{"close": "close"}}})
+}
+
 // generate pagination keyboard row
 func rowPagination(cmd string, page int, total int) [][]map[string]string {
 	// make matrix with empty row
@@ -1035,9 +999,7 @@ func sendTo(id int64, text string) (tgbotapi.Message, error) {
 
 // shortcut for text message with close button
 func sendAlert(id int64, text string) (tgbotapi.Message, error) {
-	return sendMessage(id, text,
-		genKeyboard([][]map[string]string{{{"close": "close"}}}),
-	)
+	return sendMessage(id, text, closeButton())
 }
 
 // broadcast message to all users
@@ -1404,7 +1366,7 @@ func rawHandler(raw string) (string, tgbotapi.InlineKeyboardMarkup) {
 	switch {
 	// empty input
 	case raw == "":
-		res = "You are in raw command mode."
+		// skip
 	// cmd is ip address
 	case ip != "":
 		// ip is sw ip
@@ -1419,12 +1381,12 @@ func rawHandler(raw string) (string, tgbotapi.InlineKeyboardMarkup) {
 	case isContract(cmd):
 		res, kb = clientHandler(cmd, args)
 	default:
-		res = fmtErr("Failed to parse raw input.")
-		logError(fmt.Sprintf("[rawHandler] Failed to parse: %s", raw))
+		// search in db by default
+		res, kb = searchHandler(cmd, 1)
 	}
 	// default keyboard with close button
 	if len(kb.InlineKeyboard) == 0 {
-		kb = genKeyboard([][]map[string]string{{{"close": "close"}}})
+		kb = closeButton()
 	}
 	return res, kb
 }
@@ -1439,7 +1401,13 @@ func swHandler(ip string, port string, args string) (string, tgbotapi.InlineKeyb
 	logDebug(fmt.Sprintf("[swHandler] ip: %s, port: %s, args: '%s'", ip, port, args))
 	// empty or invalid port - return full sw info
 	if _, err := strconv.Atoi(port); err != nil {
-		res, _ = swSummary(ip, "full")
+		res, err = swSummary(ip, "full")
+		if err == nil || err.Error() == "unavailable" {
+			kb = genKeyboard([][]map[string]string{{
+				{"refresh": fmt.Sprintf("raw edit %s", ip)},
+				{"close": "close"},
+			}})
+		}
 		return res, kb
 	}
 	// clear counters if needed
@@ -1481,7 +1449,7 @@ func calcHandler(arg string) string {
 	var res string
 	ip := fullIP(arg, false)
 	if ip == "" {
-		res = "You are in ip calculator mode. Send valid ip address or /raw to return."
+		res = fmt.Sprintf("[calc] wrong ip: %s", arg)
 	} else {
 		res = ipCalc(ip)
 	}
@@ -1586,13 +1554,9 @@ func clientHandler(client string, args string) (string, tgbotapi.InlineKeyboardM
 func searchHandler(kw string, page int) (string, tgbotapi.InlineKeyboardMarkup) {
 	var res string                       // text message result
 	var kb tgbotapi.InlineKeyboardMarkup // inline keyboard markup
-	if kw == "" {
-		res = "You are in search mode"
-		return res, kb
-	}
 	resp, err := requestAPI("POST", "/db/search", map[string]interface{}{"keyword": kw, "page": page, "per_page": 4})
 	if err != nil {
-		res = fmtErr(err.Error())
+		res = fmt.Sprintf("Search for '%s': %v", kw, err)
 	} else {
 		var result DBSearch
 		err = mapstructure.Decode(resp, &result)
@@ -1672,26 +1636,26 @@ func pingerStop(uid int64) {
 		p.Stop()
 		// remove pinger from global list
 		delete(Pingers, uid)
+		// restore mode
+		Data[uid].Mode = "raw"
 	}
 }
 
 // ping mode handler
 func pingHandler(msg string, uid int64) string {
 	var res string // text message result
-	switch msg {
-	case "":
-		res = "You are in ping mode. Send <b>host</b> to start pinging. Send <code>stop</code> to stop pinging."
-	case "stop":
+	if msg == "stop" {
 		pingerStop(uid)
-	default:
+	} else {
 		if fullIP(msg, true) != "" {
-			return fmtErr("Impossible to ping switch ip without violating network conception. Use /raw mode for availability checks.")
+			Data[uid].Mode = "raw"
+			return fmtErr("Impossible to ping switch ip without violating network conception. Use raw mode for availability checks.")
 		} else if ip := fullIP(msg, false); ip != "" {
 			msg = ip
 		}
-		err := pingerStart(uid, msg)
-		if err != nil {
+		if err := pingerStart(uid, msg); err != nil {
 			res = fmtErr(err.Error())
+			Data[uid].Mode = "raw"
 		}
 	}
 	return res
@@ -2055,8 +2019,7 @@ func commentHandler(args string, uid int64, msgID int) (string, tgbotapi.InlineK
 		clearReplyKeyboard(uid)
 		res, kb = ticketsHandler("list", uid)
 	} else {
-		res = fmtErr("Wrong comment params")
-		kb = genKeyboard([][]map[string]string{{{"close": "close"}}})
+		res, kb = fmtErr("Wrong comment params"), closeButton()
 		logError(fmt.Sprintf("[comment] Wrong params: %s", args))
 	}
 	return res, kb
@@ -2088,7 +2051,7 @@ func main() {
 			var res string                       // output message
 			var kb tgbotapi.InlineKeyboardMarkup // output keyboard markup
 
-			// send dummy message
+			// send dummy message (will be edited after processing)
 			tmpMsg, _ := sendTo(uid, "Waiting...")
 
 			cmd := u.Message.Command()
@@ -2108,35 +2071,35 @@ func main() {
 			// cmd processing
 			switch cmd {
 			case "help":
-				res = HELPUSER
-				goto SEND
-			case "start":
-				res = HELPUSER
+				res, kb = HELPUSER, closeButton()
 				goto SEND
 			case "admin":
 				if uid == CFG.Admin {
 					Data[uid].Mode = "admin"
 				} else {
-					res = fmtErr("You have no permissions to work in this mode.")
+					res, kb = "You have no permissions to work in this mode", closeButton()
 					goto SEND
 				}
-			case "raw", "search", "ping", "calc", "comment", "config":
+			case "raw", "comment", "config":
 				Data[uid].Mode = cmd
-			case "report":
-				Data[uid].Mode = cmd
-				res = "You are in report mode. " +
-					"Send message with your report, you can also attach screenshots or other media.\n" +
-					"To cancel and return to raw command mode, send /raw."
-				goto SEND
 			case "tickets":
-				res, kb = ticketsHandler(cmdArgs, uid)
+				res, kb = ticketsHandler(msg, uid)
 				goto SEND
+			case "calc":
+				if msg != "" {
+					res, kb = calcHandler(msg), closeButton()
+				}
+				goto SEND
+			case "ping":
+				if msg != "" {
+					Data[uid].Mode = cmd
+				}
 			// no command
 			case "":
 				// skip
 			// wrong command
 			default:
-				res = fmtErr("Unknown command.")
+				// ignore
 				goto SEND
 			}
 
@@ -2144,23 +2107,8 @@ func main() {
 			switch Data[uid].Mode {
 			case "admin":
 				res = adminHandler(msg)
-			case "report":
-				fwd := tgbotapi.NewForward(CFG.ReportChannel, uid, u.Message.MessageID)
-				_, err := Bot.Send(fwd)
-				if err != nil {
-					logError(fmt.Sprintf("[report] %v", err))
-					res += "Your report failed. Contact admin to check logs. "
-				} else {
-					res += "Your report has been sent. "
-				}
-				res += "Send another message or return to raw command mode by sending /raw."
-			case "search":
-				// search and go to the first page
-				res, kb = searchHandler(msg, 1)
 			case "ping":
 				res = pingHandler(msg, uid)
-			case "calc":
-				res = calcHandler(msg)
 			case "config":
 				// increased msgID - future answer from bot
 				res, kb = configHandler(msg, uid, u.Message.MessageID+1)
@@ -2170,6 +2118,7 @@ func main() {
 				res, kb = rawHandler(msg)
 			}
 		SEND:
+			// edit dummy message with actual res
 			if res != "" {
 				if len(kb.InlineKeyboard) > 0 {
 					editTextAndKeyboard(&tmpMsg, res, kb)
@@ -2177,7 +2126,7 @@ func main() {
 					editTextRemoveKeyboard(&tmpMsg, res)
 				}
 			} else {
-				logWarning("[message] Empty result")
+				// delete dummy message on empty res
 				Bot.Request(tgbotapi.NewDeleteMessage(uid, tmpMsg.MessageID))
 			}
 			// clear user input

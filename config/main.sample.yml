@@ -4,7 +4,6 @@ bot_token: 1234567890:ABcdefghigklmnopqrstuvwxyz123456789  # telegram bot token
 use_webhook: true                           # if disabled, use polling (for NAT)
 webhook_url: https://example.com/api/       # wehook url which is routed to app
 listen_port: "9000"                         # internal port app listen on
-report_channel: -100123456789               # channel id for bug reports
 admin: 123456789                            # telegram user id for admin
 inkotools_api_url: http://127.0.0.1:9999/   # url to inkotools api service
 graydb_url: https://graydb.inko.tools/      # url to gray database
