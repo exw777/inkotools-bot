@@ -11,15 +11,15 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o inkotools-bot
 
 FROM alpine
 
+WORKDIR /app/
+
 RUN apk add --no-cache tzdata
 
-RUN mkdir /data/ && \
-    chown 1000:1000 /data/
+VOLUME ["/app/config"]
+VOLUME ["/app/data"]
 
-VOLUME ["/data"]
+CMD ["/app/inkotools-bot"]
 
-CMD ["/inkotools-bot"]
+COPY --chown=1000:1000 templates /app/templates
 
-COPY templates /templates
-
-COPY --from=build /go/src/inkotools-bot /
+COPY --from=build --chown=1000:1000 /go/src/inkotools-bot /app/

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"math/rand"
 	"net/http"
@@ -27,27 +26,26 @@ import (
 )
 
 // CFGFILE - path to config file
-const CFGFILE string = "config.yml"
+const CFGFILE string = "config/main.yml"
 
 // Config struct
 type Config struct {
-	BotToken      string                `yaml:"bot_token"`
-	UseWebhook    bool                  `yaml:"use_webhook"`
-	WebhookURL    string                `yaml:"webhook_url"`
-	ListenPort    string                `yaml:"listen_port"`
-	ReportChannel int64                 `yaml:"report_channel"`
-	Admin         int64                 `yaml:"admin"`
-	Users         map[int64]*UserConfig `yaml:"users"`
-	InkoToolsAPI  string                `yaml:"inkotools_api_url"`
-	GraydbURL     string                `yaml:"graydb_url"`
-	DebugMode     bool                  `yaml:"debug"`
+	BotToken      string `yaml:"bot_token"`
+	UseWebhook    bool   `yaml:"use_webhook"`
+	WebhookURL    string `yaml:"webhook_url"`
+	ListenPort    string `yaml:"listen_port"`
+	ReportChannel int64  `yaml:"report_channel"`
+	Admin         int64  `yaml:"admin"`
+	InkoToolsAPI  string `yaml:"inkotools_api_url"`
+	GraydbURL     string `yaml:"graydb_url"`
+	DebugMode     bool   `yaml:"debug"`
 }
 
 // UserConfig struct
 type UserConfig struct {
 	Name            string `yaml:"name"`
 	Token           string `yaml:"token"`
-	Username        string `yaml:"-"` // not saved, returned from api by token
+	Username        string `yaml:"username"` // returned from api by token, saved for templates
 	RefreshEnabled  bool   `yaml:"refresh_enabled"`
 	RefreshInterval string `yaml:"refresh_interval"`
 	RefreshStart    string `yaml:"refresh_start"`
@@ -81,6 +79,9 @@ var Data map[int64]*UserData
 
 // CFG - config object
 var CFG Config
+
+// Users - users config
+var Users map[int64]*UserConfig
 
 // TPL - templates object
 var TPL *template.Template
@@ -443,7 +444,7 @@ var BotCommands = []tgbotapi.BotCommand{
 
 // check if uid is in users map
 func userIsAuthorized(id int64) bool {
-	_, ok := CFG.Users[id]
+	_, ok := Users[id]
 	return ok
 }
 
@@ -650,7 +651,7 @@ func initBot() tgbotapi.UpdatesChannel {
 	Pingers = make(map[int64]ping.Pinger)
 	// init user data
 	Data = make(map[int64]*UserData)
-	for uid := range CFG.Users {
+	for uid := range Users {
 		initUserData(uid)
 	}
 	// load user data from files
@@ -672,9 +673,9 @@ func initBot() tgbotapi.UpdatesChannel {
 	}
 	// init cron
 	Cron = cron.New()
-	for uid := range CFG.Users {
+	for uid := range Users {
 		// init cron only for authorized in gray database users
-		if CFG.Users[uid].Token != "" {
+		if Users[uid].Token != "" {
 			initUserCron(uid)
 		}
 	}
@@ -696,7 +697,7 @@ func initBot() tgbotapi.UpdatesChannel {
 
 // init user cron
 func initUserCron(uid int64) {
-	if CFG.Users[uid].RefreshEnabled {
+	if Users[uid].RefreshEnabled {
 		updateCronJob(uid)
 		updateCronEntry(uid, "start")
 		updateCronEntry(uid, "stop")
@@ -713,20 +714,34 @@ func initUserData(uid int64) {
 	Data[uid].Cron = map[string]cron.EntryID{"job": 0, "start": 0, "stop": 0}
 }
 
-// load config from file
-func loadConfig() error {
-	data, err := ioutil.ReadFile(CFGFILE)
+// init configuration
+func initConfig() error {
+	// load main config
+	err := readYML(&CFG, CFGFILE)
 	if err != nil {
-		logError(fmt.Sprintf("[config] Read file failed: %v", err))
 		return err
 	}
-	err = yaml.Unmarshal(data, &CFG)
+	// init users config
+	Users = make(map[int64]*UserConfig)
+	c, err := os.Open("config")
+	cFiles, err := c.Readdir(0)
 	if err != nil {
-		logError(fmt.Sprintf("[config] Parse yaml failed: %v", err))
-		return err
+		logError(fmt.Sprintf("[init] Read config files failed: %v", err))
 	}
-	logInfo(fmt.Sprintf("[config] Loaded from %s", CFGFILE))
-	// Template functions
+	c.Close()
+	for _, v := range cFiles {
+		uid, err := strconv.ParseInt(strings.TrimSuffix(v.Name(), ".yml"), 10, 64)
+		if err == nil {
+			logDebug(fmt.Sprintf("[init] Loading config file: %s", v.Name()))
+			loadUserConfig(uid)
+		}
+	}
+	// init admin account
+	if !userIsAuthorized(CFG.Admin) {
+		logWarning("[init] Creating admin config")
+		initUserConfig(CFG.Admin, "admin")
+	}
+	// template functions
 	funcMap := template.FuncMap{
 		"fmtBytes": fmtBytes,
 		"fmtKbits": func(x uint) string { return fmtBytes(x*125, true) },
@@ -752,22 +767,66 @@ func loadConfig() error {
 	return nil
 }
 
-// write config to file
+// save main config to file
 func saveConfig() error {
-	// set default values
-	for i, e := range CFG.Users {
-		if e.RefreshInterval == "" {
-			CFG.Users[i].RefreshInterval = "15m"
-		}
-		if e.RefreshStart == "" {
-			CFG.Users[i].RefreshStart = "09:00"
-		}
-		if e.RefreshStop == "" {
-			CFG.Users[i].RefreshStop = "20:00"
-		}
+	return writeYML(&CFG, CFGFILE)
+}
+
+// save user config to file
+func saveUserConfig(uid int64) error {
+	return writeYML(Users[uid], fmt.Sprintf("config/%d.yml", uid))
+}
+
+// init new user config
+func initUserConfig(uid int64, name string) error {
+	if name == "" {
+		name = fmt.Sprintf("user-%d", uid)
 	}
+	u := UserConfig{Name: name}
+	logWarning(fmt.Sprintf("[config] Using default config for %d", uid))
+	err := readYML(&u, "config/default.yml")
+	if err != nil {
+		return err
+	}
+	Users[uid] = &u
+	return saveUserConfig(uid)
+}
+
+// load user config from file
+func loadUserConfig(uid int64) error {
+	var u UserConfig
+	filename := fmt.Sprintf("config/%d.yml", uid)
+	if _, err := os.Stat(filename); os.IsNotExist(err) {
+		return initUserConfig(uid, "")
+	}
+	err := readYML(&u, filename)
+	if err != nil {
+		return err
+	}
+	Users[uid] = &u
+	return nil
+}
+
+// read config from yaml
+func readYML(cfg interface{}, filename string) error {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		logError(fmt.Sprintf("[config] Read file failed: %v", err))
+		return err
+	}
+	err = yaml.Unmarshal(data, cfg)
+	if err != nil {
+		logError(fmt.Sprintf("[config] Parse yaml failed: %v", err))
+		return err
+	}
+	logInfo(fmt.Sprintf("[config] Loaded %s", filename))
+	return nil
+}
+
+// write config to yaml
+func writeYML(cfg interface{}, filename string) error {
 	// encode to yaml
-	data, err := yaml.Marshal(&CFG)
+	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		logError(fmt.Sprintf("[config] YAML marshal failed: %v", err))
 		return err
@@ -775,12 +834,12 @@ func saveConfig() error {
 	// attach document start and end strings
 	data = append([]byte("---\n"), data...)
 	data = append(data, []byte("...\n")...)
-	err = ioutil.WriteFile(CFGFILE, data, 0644)
+	err = os.WriteFile(filename, data, 0644)
 	if err != nil {
 		logError(fmt.Sprintf("[config] Write file failed: %v", err))
 		return err
 	}
-	logInfo(fmt.Sprintf("[config] Saved to %s", CFGFILE))
+	logInfo(fmt.Sprintf("[config] Saved %s", filename))
 	return nil
 }
 
@@ -829,23 +888,22 @@ func manageUser(args string, enabled bool) string {
 	}
 	var msgUser, msgAdmin string
 	if enabled && !userIsAuthorized(uid) {
-		CFG.Users[uid] = &UserConfig{Name: name}
+		initUserConfig(uid, name)
 		initUserData(uid)
-		logInfo(fmt.Sprintf("[user] %d (%s) added", uid, CFG.Users[uid].Name))
+		logInfo(fmt.Sprintf("[user] %d (%s) added", uid, Users[uid].Name))
 		msgUser = "You are added to authorized users list."
-		msgAdmin = fmt.Sprintf("User <code>%d</code> <b>%s</b> added.",
-			uid, CFG.Users[uid].Name)
+		msgAdmin = fmt.Sprintf("User <code>%d</code> <b>%s</b> added.", uid, Users[uid].Name)
 	} else if !enabled && userIsAuthorized(uid) {
-		logInfo(fmt.Sprintf("[user] %d (%s) removed", uid, CFG.Users[uid].Name))
+		logInfo(fmt.Sprintf("[user] removing %d (%s)", uid, Users[uid].Name))
 		msgUser = "You are removed from authorized users list."
-		msgAdmin = fmt.Sprintf("User <code>%d</code> <b>%s</b> removed.",
-			uid, CFG.Users[uid].Name)
-		delete(CFG.Users, uid)
+		msgAdmin = fmt.Sprintf("User <code>%d</code> <b>%s</b> removed.", uid, Users[uid].Name)
+		delete(Users, uid)
 		delete(Data, uid)
+		os.Remove(fmt.Sprintf("config/%d.yml", uid))
+		os.Remove(fmt.Sprintf("data/%d.gob", uid))
 	} else {
 		return "Nothing to do"
 	}
-	saveConfig()
 	sendTo(uid, msgUser)
 	return msgAdmin
 }
@@ -861,7 +919,7 @@ func sendMessage(id int64, text string, kb interface{}) (tgbotapi.Message, error
 	msg.ReplyMarkup = kb
 	res, err := Bot.Send(msg)
 	if err != nil {
-		logError(fmt.Sprintf("[send] [%s] %v, msg: %#v ", CFG.Users[id].Name, err, msg))
+		logError(fmt.Sprintf("[send] [%s] %v, msg: %#v ", Users[id].Name, err, msg))
 	}
 	return res, err
 }
@@ -987,7 +1045,7 @@ func broadcastSend(text string) string {
 	if text == "" {
 		return fmtErr("empty message")
 	}
-	for uid := range CFG.Users {
+	for uid := range Users {
 		_, err := sendTo(uid, text)
 		if err == nil {
 			res += fmt.Sprintf("%d OK\n", uid)
@@ -1304,7 +1362,7 @@ func adminHandler(msg string) string {
 	var err error
 	switch cmd {
 	case "list":
-		for id, u := range CFG.Users {
+		for id, u := range Users {
 			res += fmt.Sprintf(
 				"<code>%d</code> - <a href=\"tg://user?id=%d\">%s</a>\n", id, id, u.Name)
 		}
@@ -1324,7 +1382,7 @@ func adminHandler(msg string) string {
 	case "broadcast":
 		res = broadcastSend(arg)
 	case "reload":
-		err = loadConfig()
+		err = initConfig()
 		if err != nil {
 			res = "Failed"
 		} else {
@@ -1558,10 +1616,10 @@ func pingerStart(uid int64, host string) error {
 	if _, exist := Pingers[uid]; exist {
 		pingerStop(uid)
 	}
-	logDebug(fmt.Sprintf("[ping] [%s] starting %s", CFG.Users[uid].Name, host))
+	logDebug(fmt.Sprintf("[ping] [%s] starting %s", Users[uid].Name, host))
 	p, err := ping.NewPinger(host)
 	if err != nil {
-		logError(fmt.Sprintf("[ping] [%s] [%s] %v", CFG.Users[uid].Name, host, err))
+		logError(fmt.Sprintf("[ping] [%s] [%s] %v", Users[uid].Name, host, err))
 		return err
 	}
 	// start message
@@ -1609,7 +1667,7 @@ func pingerStop(uid int64) {
 	// check if pinger exists and stop it
 	if _, exist := Pingers[uid]; exist {
 		p := Pingers[uid]
-		logDebug(fmt.Sprintf("[ping] [%s] stopping %s", CFG.Users[uid].Name, p.Addr()))
+		logDebug(fmt.Sprintf("[ping] [%s] stopping %s", Users[uid].Name, p.Addr()))
 		p.Stop()
 		// remove pinger from global list
 		delete(Pingers, uid)
@@ -1653,14 +1711,12 @@ func configHandler(msg string, uid int64, msgID int) (string, tgbotapi.InlineKey
 			Data[uid].Mode = "config"
 			Data[uid].TMP = fmt.Sprintf("%d %s", msgID, msg)
 		case "toggleRefresh":
-			CFG.Users[uid].RefreshEnabled = !CFG.Users[uid].RefreshEnabled
+			Users[uid].RefreshEnabled = !Users[uid].RefreshEnabled
 			initUserCron(uid)
 		case "toggleNew":
-			CFG.Users[uid].NotifyNew = !CFG.Users[uid].NotifyNew
+			Users[uid].NotifyNew = !Users[uid].NotifyNew
 		case "toggleUpdate":
-			CFG.Users[uid].NotifyUpdate = !CFG.Users[uid].NotifyUpdate
-		case "save":
-			saveConfig()
+			Users[uid].NotifyUpdate = !Users[uid].NotifyUpdate
 		}
 
 	} else { // input mode, msg - data entered by user
@@ -1684,7 +1740,14 @@ func configHandler(msg string, uid int64, msgID int) (string, tgbotapi.InlineKey
 				res = fmtErr(err.Error())
 				kb = genKeyboard([][]map[string]string{{{"try again": "config edit login"}, {"close": "close"}}})
 			} else {
-				mapstructure.Decode(resp["data"].(map[string]interface{})["token"], &CFG.Users[uid].Token)
+				mapstructure.Decode(resp["data"].(map[string]interface{})["token"], &Users[uid].Token)
+				// get username from api
+				resp, err := requestAPI("GET", "/gdb/user", map[string]interface{}{"token": Users[uid].Token})
+				if err != nil {
+					Users[uid].Username = err.Error()
+				} else {
+					mapstructure.Decode(resp["data"].(map[string]interface{})["username"], &Users[uid].Username)
+				}
 			}
 			Data[uid].TMP = ""
 		case "interval":
@@ -1693,7 +1756,7 @@ func configHandler(msg string, uid int64, msgID int) (string, tgbotapi.InlineKey
 			} else if dt < time.Minute {
 				sendAlert(uid, "Duration is less than 1m")
 			} else {
-				CFG.Users[uid].RefreshInterval = enteredValue
+				Users[uid].RefreshInterval = enteredValue
 				updateCronJob(uid)
 			}
 			Data[uid].TMP = ""
@@ -1702,10 +1765,10 @@ func configHandler(msg string, uid int64, msgID int) (string, tgbotapi.InlineKey
 				sendAlert(uid, "Invalid time format, use <code>HH:MM</code>")
 			} else {
 				if enteredKey == "from" {
-					CFG.Users[uid].RefreshStart = enteredValue
+					Users[uid].RefreshStart = enteredValue
 					updateCronEntry(uid, "start")
 				} else {
-					CFG.Users[uid].RefreshStop = enteredValue
+					Users[uid].RefreshStop = enteredValue
 					updateCronEntry(uid, "stop")
 				}
 				// update job because working time could be changed
@@ -1718,6 +1781,10 @@ func configHandler(msg string, uid int64, msgID int) (string, tgbotapi.InlineKey
 	// restore mode on cleared tmp
 	if Data[uid].TMP == "" {
 		Data[uid].Mode = "raw"
+		// save message on changes
+		if msg != "" {
+			saveUserConfig(uid)
+		}
 	}
 	// print config on empty res
 	if res == "" {
@@ -1738,19 +1805,12 @@ func printLogin() (string, tgbotapi.InlineKeyboardMarkup) {
 func printConfig(uid int64) (string, tgbotapi.InlineKeyboardMarkup) {
 	var res string
 	var kb tgbotapi.InlineKeyboardMarkup
-	if CFG.Users[uid].Token == "" {
+	if Users[uid].Token == "" {
 		return printLogin()
 	}
-	// get username from api
-	resp, err := requestAPI("GET", "/gdb/user", map[string]interface{}{"token": CFG.Users[uid].Token})
-	if err != nil {
-		CFG.Users[uid].Username = err.Error()
-	} else {
-		mapstructure.Decode(resp["data"].(map[string]interface{})["username"], &CFG.Users[uid].Username)
-	}
-	res = fmtObj(CFG.Users[uid], "config.tmpl")
+	res = fmtObj(Users[uid], "config.tmpl")
 	buttons := [][]map[string]string{{{"edit credentials": "config edit login"}}}
-	if CFG.Users[uid].RefreshEnabled {
+	if Users[uid].RefreshEnabled {
 		buttons = append(buttons,
 			[]map[string]string{
 				{"disable refresh": "config edit toggleRefresh"},
@@ -1767,10 +1827,7 @@ func printConfig(uid int64) (string, tgbotapi.InlineKeyboardMarkup) {
 	} else {
 		buttons = append(buttons, []map[string]string{{"enable refresh": "config edit toggleRefresh"}})
 	}
-	buttons = append(buttons, []map[string]string{
-		{"save": "config edit save"},
-		{"close": "close"},
-	})
+	buttons = append(buttons, []map[string]string{{"close": "close"}})
 	kb = genKeyboard(buttons)
 	return res, kb
 }
@@ -1784,25 +1841,25 @@ func updateCronEntry(uid int64, key string) {
 	switch key {
 	case "job":
 		// set random interval +/- 15s from original
-		t, _ := time.ParseDuration(CFG.Users[uid].RefreshInterval)
+		t, _ := time.ParseDuration(Users[uid].RefreshInterval)
 		t += time.Duration(rand.Intn(30)-15) * time.Second
 		s = fmt.Sprintf("@every %s", t)
 		f = func() { updateTickets(uid) }
 	case "start":
-		h, m := splitTime(CFG.Users[uid].RefreshStart)
+		h, m := splitTime(Users[uid].RefreshStart)
 		s = fmt.Sprintf("%d %d * * *", m, h)
 		f = func() { updateCronJob(uid) }
 	case "stop":
-		h, m := splitTime(CFG.Users[uid].RefreshStop)
+		h, m := splitTime(Users[uid].RefreshStop)
 		s = fmt.Sprintf("%d %d * * *", m, h)
 		f = func() { removeCronEntry(uid, "job") }
 	}
 	id, err := Cron.AddFunc(s, f)
 	if err != nil {
-		logError(fmt.Sprintf("[cron] [%s] failed to add %s entry: %v", CFG.Users[uid].Name, key, err))
+		logError(fmt.Sprintf("[cron] [%s] failed to add %s entry: %v", Users[uid].Name, key, err))
 	} else {
 		Data[uid].Cron[key] = id
-		logInfo(fmt.Sprintf("[cron] [%s] added %s entry %s [%d]", CFG.Users[uid].Name, key, s, id))
+		logInfo(fmt.Sprintf("[cron] [%s] added %s entry %s [%d]", Users[uid].Name, key, s, id))
 	}
 }
 
@@ -1811,24 +1868,24 @@ func removeCronEntry(uid int64, key string) {
 	id := Data[uid].Cron[key]
 	if Cron.Entry(id).Valid() {
 		Cron.Remove(id)
-		logInfo(fmt.Sprintf("[cron] [%s] removed %s entry [%d]", CFG.Users[uid].Name, key, id))
+		logInfo(fmt.Sprintf("[cron] [%s] removed %s entry [%d]", Users[uid].Name, key, id))
 	}
 }
 
 // update user job
 func updateCronJob(uid int64) {
-	if nowIsBetween(CFG.Users[uid].RefreshStart, CFG.Users[uid].RefreshStop) {
+	if nowIsBetween(Users[uid].RefreshStart, Users[uid].RefreshStop) {
 		updateCronEntry(uid, "job")
 		// run job immediately after adding
 		go Cron.Entry(Data[uid].Cron["job"]).Job.Run()
 	} else {
-		logWarning(fmt.Sprintf("[cron] [%s] job skipped due to working time range", CFG.Users[uid].Name))
+		logWarning(fmt.Sprintf("[cron] [%s] job skipped due to working time range", Users[uid].Name))
 	}
 }
 
 // update user tickets cache
 func updateTickets(uid int64) error {
-	resp, err := requestAPI("GET", "/gdb/user/tickets", map[string]interface{}{"token": CFG.Users[uid].Token})
+	resp, err := requestAPI("GET", "/gdb/user/tickets", map[string]interface{}{"token": Users[uid].Token})
 	if err != nil {
 		return err
 	}
@@ -1846,8 +1903,8 @@ func updateTickets(uid int64) error {
 		if _, ok := oldTickets[e.TicketID]; !ok {
 			// new ticket notification
 			isModified = true
-			logInfo(fmt.Sprintf("[tickets] [%s] New ticket: %s/%d", CFG.Users[uid].Name, e.ContractID, e.TicketID))
-			if CFG.Users[uid].NotifyNew {
+			logInfo(fmt.Sprintf("[tickets] [%s] New ticket: %s/%d", Users[uid].Name, e.ContractID, e.TicketID))
+			if Users[uid].NotifyNew {
 				sendAlert(uid, fmtObj(e, "ticket.user.tmpl"))
 			}
 		}
@@ -1859,8 +1916,8 @@ func updateTickets(uid int64) error {
 				if c > len(oldTickets[e.TicketID]) && !isModified {
 					// new comment notification (only for old tickets)
 					logInfo(fmt.Sprintf("[tickets] [%s] %s commented %s/%d: %s",
-						CFG.Users[uid].Name, lastComment.Author, e.ContractID, e.TicketID, lastComment.Comment))
-					if CFG.Users[uid].NotifyUpdate {
+						Users[uid].Name, lastComment.Author, e.ContractID, e.TicketID, lastComment.Comment))
+					if Users[uid].NotifyUpdate {
 						sendAlert(uid, fmt.Sprintf("/%s %s\n%s: %s",
 							e.ContractID, fmtAddress(e.Address), lastComment.Author, lastComment.Comment))
 					}
@@ -1882,7 +1939,7 @@ func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarku
 	var kb tgbotapi.InlineKeyboardMarkup
 	var page int
 	var buttons [][]map[string]string
-	if CFG.Users[uid].Token == "" {
+	if Users[uid].Token == "" {
 		return printLogin()
 	}
 	// update tickets cache on refresh and first run
@@ -1956,7 +2013,7 @@ func addComment(uid int64, contract string, ticket string, comment string) {
 	_, err := requestAPI("POST",
 		fmt.Sprintf("/gdb/%s/tickets/%s", contract, ticket),
 		map[string]interface{}{
-			"token":   CFG.Users[uid].Token,
+			"token":   Users[uid].Token,
 			"comment": comment,
 		})
 	if err != nil {
@@ -2006,7 +2063,7 @@ func commentHandler(args string, uid int64, msgID int) (string, tgbotapi.InlineK
 
 // MAIN APP
 func main() {
-	loadConfig()
+	initConfig()
 	// serve telegram updates
 	for u := range initBot() {
 		// empty updates if user blocked or restarted bot
@@ -2025,7 +2082,7 @@ func main() {
 		}
 		// message updates
 		if u.Message != nil {
-			logInfo(fmt.Sprintf("[message] [%s] %s", CFG.Users[uid].Name, u.Message.Text))
+			logInfo(fmt.Sprintf("[message] [%s] %s", Users[uid].Name, u.Message.Text))
 			var msg string                       // input message
 			var res string                       // output message
 			var kb tgbotapi.InlineKeyboardMarkup // output keyboard markup
@@ -2126,7 +2183,7 @@ func main() {
 			Bot.Request(tgbotapi.NewDeleteMessage(uid, u.Message.MessageID))
 
 		} else if u.CallbackData() != "" { // callback updates
-			logInfo(fmt.Sprintf("[callback] [%s] %s", CFG.Users[uid].Name, u.CallbackData()))
+			logInfo(fmt.Sprintf("[callback] [%s] %s", Users[uid].Name, u.CallbackData()))
 			// skip dummy button
 			if u.CallbackData() == "dummy" {
 				continue
