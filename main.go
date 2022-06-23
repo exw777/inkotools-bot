@@ -2130,7 +2130,9 @@ func main() {
 				Bot.Request(tgbotapi.NewDeleteMessage(uid, tmpMsg.MessageID))
 			}
 			// clear user input
-			Bot.Request(tgbotapi.NewDeleteMessage(uid, u.Message.MessageID))
+			if cmd != "start" {
+				Bot.Request(tgbotapi.NewDeleteMessage(uid, u.Message.MessageID))
+			}
 
 		} else if u.CallbackData() != "" { // callback updates
 			logInfo(fmt.Sprintf("[callback] [%s] %s", Users[uid].Name, u.CallbackData()))
