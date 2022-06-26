@@ -1,3 +1,6 @@
 {{ range $i, $e := . }}
-<b>{{ inc $i }}{{if .Modified }}*{{ end }}</b> /{{ .ContractID }} {{ fmtAddress .Address }}
+<b>{{ inc $i }} </b>
+{{- if .Tag }}{{ .Tag }}
+{{- else if .Modified }}&#128261;
+{{- end }} /{{ .ContractID }} {{ fmtAddress .Address }}
 {{ end -}}

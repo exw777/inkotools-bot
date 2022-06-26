@@ -1,4 +1,4 @@
-[<code>{{ .ContractID }}</code>] <b>{{ .Name }}</b>
+{{ if .Tag }}{{ .Tag }}{{ end }}[<code>{{ .ContractID }}</code>] <b>{{ .Name }}</b>
 &#127968; <code>{{ fmtAddress .Address }}</code>
 {{- range .Contacts }}
 &#128222;<a href="tel:{{ fmtPhone . }}">{{ fmtPhone . }}</a>

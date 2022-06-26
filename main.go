@@ -310,6 +310,7 @@ type Ticket struct {
 	Address    string          `mapstructure:"address"`
 	Contacts   []string        `mapstructure:"contacts"`
 	Modified   bool
+	Tag        string
 }
 
 // TicketComment type
@@ -383,6 +384,9 @@ const HELPADMIN string = `
 <code>broadcast TEXT</code> - send broadcast message <b><i>TEXT</i></b> 
 <code>reload</code> - reload configuration from file
 `
+
+// UserTags - icons for custom user tags in tickets
+const UserTags string = "🆕:⚒:🚨:👁‍🗨:📟:🔫:🪜:🪡:🧵:🛅:🌀:🔐:🌚:🕑:✅"
 
 // BotCommands const
 var BotCommands = []tgbotapi.BotCommand{
@@ -570,6 +574,19 @@ func nowIsBetween(from string, to string) bool {
 		return true
 	}
 	return false
+}
+
+// calculate optimal row length for many buttons
+func calcRowLength(x int) int {
+	// in telegram max row length is 8
+	inRow := 8
+	if x > inRow && x%inRow > 0 {
+		inRow = x / (x/inRow + 1)
+		if x%inRow > 0 {
+			inRow++
+		}
+	}
+	return inRow
 }
 
 // MAIN FUNCTIONS
@@ -1856,8 +1873,11 @@ func updateTickets(uid int64) error {
 	}
 	// save old tickets to compare with updated
 	oldTickets := make(map[int][]TicketComment)
+	// save old tags to restore after update
+	oldTags := make(map[int]string)
 	for _, e := range Data[uid].Tickets.Data {
 		oldTickets[e.TicketID] = e.Comments
+		oldTags[e.TicketID] = e.Tag
 	}
 	// clear cache before update
 	Data[uid].Tickets.Data = nil
@@ -1872,11 +1892,15 @@ func updateTickets(uid int64) error {
 			if Users[uid].NotifyNew {
 				res := fmtObj(e, "ticket.user.tmpl")
 				kb := genKeyboard([][]map[string]string{{
-					{"add comment": fmt.Sprintf("comment edit %s %d", e.ContractID, e.TicketID)},
+					{"comment": fmt.Sprintf("comment edit %s %d", e.ContractID, e.TicketID)},
+					{"tag": fmt.Sprintf("tag edit %d", e.TicketID)},
 					{"close": "close"},
 				}})
 				sendMessage(uid, res, kb)
 			}
+		} else {
+			// for old tickets copy saved user data to updated ticket
+			Data[uid].Tickets.Data[i].Tag = oldTags[e.TicketID]
 		}
 		c := len(e.Comments)
 		if c > 0 {
@@ -1891,7 +1915,8 @@ func updateTickets(uid int64) error {
 						res := fmt.Sprintf("/%s %s\n%s: %s",
 							e.ContractID, fmtAddress(e.Address), lastComment.Author, lastComment.Comment)
 						kb := genKeyboard([][]map[string]string{{
-							{"add comment": fmt.Sprintf("comment edit %s %d", e.ContractID, e.TicketID)},
+							{"comment": fmt.Sprintf("comment edit %s %d", e.ContractID, e.TicketID)},
+							{"tag": fmt.Sprintf("tag edit %d", e.TicketID)},
 							{"close": "close"},
 						}})
 						sendMessage(uid, res, kb)
@@ -1953,21 +1978,23 @@ func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarku
 			buttons = append(buttons, []map[string]string{
 				{"all tickets": "tickets edit list"},
 				{"client info": fmt.Sprintf("raw send %s", ticket.ContractID)},
-				{"add comment": fmt.Sprintf("comment edit %s %d", ticket.ContractID, ticket.TicketID)},
+				{"comment": fmt.Sprintf("comment edit %s %d", ticket.ContractID, ticket.TicketID)},
+				{"tag": fmt.Sprintf("tag edit %d", ticket.TicketID)},
 			})
 		} else {
 			res = fmtObj(tickets, "ticket.list.tmpl")
 			// generate index buttons
 			var row []map[string]string
+			inRow := calcRowLength(total)
 			for i := 1; i <= total; i++ {
 				row = append(row, map[string]string{strconv.Itoa(i): fmt.Sprintf("tickets edit details %d", i)})
-				// 8 buttons per row
-				if len(row) == 8 {
+				// next row on hit inRow count
+				if len(row) == inRow {
 					buttons = append(buttons, row)
 					row = nil
 				}
 			}
-			// add last row (< 8 buttons)
+			// add last row (< inRow buttons)
 			if len(row) > 0 {
 				buttons = append(buttons, row)
 			}
@@ -2033,6 +2060,64 @@ func commentHandler(args string, uid int64, msgID int) (string, tgbotapi.InlineK
 		logError(fmt.Sprintf("[comment] Wrong params: %s", args))
 	}
 	return res, kb
+}
+
+// ticket tag handler
+func tagHandler(args string, uid int64) (string, tgbotapi.InlineKeyboardMarkup) {
+	var res string
+	var kb tgbotapi.InlineKeyboardMarkup
+	var found bool
+	ticket, tag := splitArgs(args)
+	ticketID, _ := strconv.Atoi(ticket)
+	if tag == "" {
+		// no params - return keyboard with tags
+		kb = genKeyboard(genTagsButtons(ticketID))
+	} else {
+		if tag == "clear" {
+			tag = ""
+		}
+		// try to find ticket id in user tickets
+		for i, e := range Data[uid].Tickets.Data {
+			if e.TicketID == ticketID {
+				Data[uid].Tickets.Data[i].Tag = tag
+				saveUserData(uid)
+				res = "Add comment?"
+				kb = genKeyboard([][]map[string]string{{
+					{"yes": fmt.Sprintf("comment edit %s %d", e.ContractID, e.TicketID)},
+					{"no": "tickets edit list"},
+				}})
+				found = true
+				break
+			}
+		}
+		if !found {
+			logError(fmt.Sprintf("[tag] ticket not found: %d", ticketID))
+		}
+	}
+	return res, kb
+}
+
+// generate tags buttons
+func genTagsButtons(ticketID int) [][]map[string]string {
+	var buttons [][]map[string]string
+	var row []map[string]string
+	// first button - 'clear'
+	row = append(row, map[string]string{" ": fmt.Sprintf("tag edit %d clear", ticketID)})
+	tags := strings.Split(UserTags, ":")
+	// increase count of tags because of first 'empty' tag (clear)
+	inRow := calcRowLength(len(tags) + 1)
+	for _, tag := range tags {
+		row = append(row, map[string]string{tag: fmt.Sprintf("tag edit %d %s", ticketID, tag)})
+		if len(row) == inRow {
+			buttons = append(buttons, row)
+			row = nil
+		}
+	}
+	// add last row (< inRow buttons)
+	if len(row) > 0 {
+		buttons = append(buttons, row)
+	}
+	return buttons
 }
 
 // MAIN APP
@@ -2181,6 +2266,8 @@ func main() {
 				res, kb = ticketsHandler(rawCmd, uid)
 			case "comment":
 				res, kb = commentHandler(rawCmd, uid, msg.MessageID)
+			case "tag":
+				res, kb = tagHandler(rawCmd, uid)
 			case "close":
 				// delete message on close button
 				_, err := Bot.Request(tgbotapi.NewDeleteMessage(uid, msg.MessageID))
