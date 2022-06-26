@@ -1382,7 +1382,7 @@ func rawHandler(raw string) (string, tgbotapi.InlineKeyboardMarkup) {
 		res, kb = clientHandler(cmd, args)
 	default:
 		// search in db by default
-		res, kb = searchHandler(cmd, 1)
+		res, kb = searchHandler(raw, 1)
 	}
 	// default keyboard with close button
 	if len(kb.InlineKeyboard) == 0 {
