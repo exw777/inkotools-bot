@@ -1862,6 +1862,8 @@ func updateCronJob(uid int64) {
 		go Cron.Entry(Data[uid].Cron["job"]).Job.Run()
 	} else {
 		logWarning(fmt.Sprintf("[cron] [%s] job skipped due to working time range", Users[uid].Name))
+		// remove old job
+		removeCronEntry(uid, "job")
 	}
 }
 
