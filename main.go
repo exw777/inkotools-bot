@@ -2159,10 +2159,33 @@ func main() {
 				msg = u.Message.Text
 			}
 
+			// workaround to remove orphan cancel button
+			if msg == "cancel" && Data[uid].Mode != "comment" {
+				logWarning("[orphan] cancel removed")
+				clearReplyKeyboard(uid)
+				goto SEND
+			}
+
+			// stop pinger outside pinger mode
+			if msg == "stop" && Data[uid].Mode != "ping" {
+				logWarning("[orphan] pinger stopped")
+				pingerStop(uid)
+				goto SEND
+			}
+
 			// workaround for contracts in cmd
 			if isContract(cmd) {
 				msg = cmd
 				cmd = "raw"
+			}
+
+			if cmd != "" {
+				// reset mode for each new command
+				Data[uid].Mode = ""
+				// clear TMP for non-interactive commands
+				if cmd != "comment" && cmd != "config" {
+					Data[uid].TMP = ""
+				}
 			}
 
 			// cmd processing
