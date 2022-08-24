@@ -1,5 +1,7 @@
 {{- define "port" }}
-{{- range .}}
+{{- range $i, $e := .}}
+{{- if gt $i 0 }}
+{{ end }}
 <i>Port: </i><b>{{ .Port }}{{ .Type }} </b>
 {{ if not .State -}}
     &#127761;[PORT OFF]

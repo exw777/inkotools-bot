@@ -1136,6 +1136,24 @@ func swSummary(ip string, style string) (string, error) {
 	return res, err
 }
 
+// get switch free ports and format them with template
+func freePorts(ip string) (string, error) {
+	var res string
+	var ports []Port
+
+	resp, err := apiGet(fmt.Sprintf("/sw/%s/freeports/", ip))
+	if err != nil {
+		return res, err
+	}
+	mapstructure.Decode(resp["data"], &ports)
+	if len(ports) == 0 {
+		res = "\n<code>Not found</code>"
+	} else {
+		res = fmtObj(ports, "port")
+	}
+	return res, err
+}
+
 // get port summary and format it with template
 func portSummary(ip string, port string, style string) (string, error) {
 	var res string        // result string
@@ -1417,13 +1435,35 @@ func swHandler(ip string, port string, args string) (string, tgbotapi.InlineKeyb
 	idx := 0                             // default index - short view
 	logDebug(fmt.Sprintf("[swHandler] ip: %s, port: %s, args: '%s'", ip, port, args))
 	// empty or invalid port - return full sw info
-	if _, err := strconv.Atoi(port); err != nil {
+	if _, err := strconv.Atoi(port); err != nil && port != "free" {
 		res, err = swSummary(ip, "full")
 		if err == nil || err.Error() == "unavailable" {
-			kb = genKeyboard([][]map[string]string{{
-				{"refresh": fmt.Sprintf("raw edit %s", ip)},
-				{"close": "close"},
-			}})
+			kb = genKeyboard([][]map[string]string{
+				{
+					{"free ports": fmt.Sprintf("raw edit %s free", ip)},
+				},
+				{
+					{"refresh": fmt.Sprintf("raw edit %s", ip)},
+					{"close": "close"},
+				},
+			})
+		}
+		return res, kb
+	}
+	// for ports switch view is always short
+	res, err = swSummary(ip, "short")
+	// no need to check port if switch is unavailable
+	if err != nil {
+		return res, kb
+	}
+	// free ports handler
+	if port == "free" {
+		res += "\nFree ports:"
+		s, err := freePorts(ip)
+		if err != nil {
+			res += fmt.Sprintf("\n<code>%s</code>", err.Error())
+		} else {
+			res += s
 		}
 		return res, kb
 	}
@@ -1433,12 +1473,6 @@ func swHandler(ip string, port string, args string) (string, tgbotapi.InlineKeyb
 	}
 	if strings.Contains(args, "full") {
 		idx = 1
-	}
-	// for ports switch view is always short
-	res, err = swSummary(ip, "short")
-	// no need to check port if switch is unavailable
-	if err != nil {
-		return res, kb
 	}
 	// get port summary
 	p, err := portSummary(ip, port, pView[idx])
