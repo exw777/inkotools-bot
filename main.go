@@ -386,7 +386,7 @@ const HELPADMIN string = `
 `
 
 // UserTags - icons for custom user tags in tickets
-const UserTags string = "🆕:⚒:🚨:👁‍🗨:📟:🔫:🪜:🪡:🧵:🛅:🌀:🔐:🌚:🕑:✅"
+const UserTags string = "🆕:⚒:🚨:👁‍🗨:📟:🔫:🪜:🧵:🛅:🌀:🔐:♾:🌚:🕑:✅"
 
 // BotCommands const
 var BotCommands = []tgbotapi.BotCommand{
