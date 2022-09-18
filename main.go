@@ -650,6 +650,13 @@ func initBot() tgbotapi.UpdatesChannel {
 	}
 	// init cron
 	Cron = cron.New()
+	// clear switches pool daily
+	id, err := Cron.AddFunc("0 0 * * *", func() { apiDelete("/pool") })
+	if err != nil {
+		logError(fmt.Sprintf("[cron] [SYSTEM] failed to add clear pool entry: %v", err))
+	} else {
+		logInfo(fmt.Sprintf("[cron] [SYSTEM] added clear pool entry daily [%d]", id))
+	}
 	for uid := range Users {
 		// init cron only for authorized in gray database users
 		if Users[uid].Token != "" {
