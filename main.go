@@ -320,6 +320,19 @@ type TicketComment struct {
 	Comment string    `mapstructure:"comment"`
 }
 
+// ContractCacheItem struct
+type ContractCacheItem struct {
+	Contract Contract
+	Updated  time.Time
+	LastCall time.Time
+}
+
+// ContractsCache - contracts cache object
+var ContractsCache map[string]*ContractCacheItem
+
+// ContractsIPCache - for searching contract by ip
+var ContractsIPCache map[string]string
+
 // ColorReset - ANSI color
 const ColorReset string = "\033[0m"
 
@@ -648,6 +661,9 @@ func initBot() tgbotapi.UpdatesChannel {
 		logDebug(fmt.Sprintf("[init] Loading data file: %s", v.Name()))
 		loadUserData(uid)
 	}
+	// init contracts cache
+	ContractsCache = make(map[string]*ContractCacheItem)
+	ContractsIPCache = make(map[string]string)
 	// init cron
 	Cron = cron.New()
 	// clear switches pool daily
@@ -656,6 +672,13 @@ func initBot() tgbotapi.UpdatesChannel {
 		logError(fmt.Sprintf("[cron] [SYSTEM] failed to add clear pool entry: %v", err))
 	} else {
 		logInfo(fmt.Sprintf("[cron] [SYSTEM] added clear pool entry daily [%d]", id))
+	}
+	// rotate contracts cache hourly
+	id, err = Cron.AddFunc("@every 1h", func() { rotateCache() })
+	if err != nil {
+		logError(fmt.Sprintf("[cron] [SYSTEM] failed to add cache rotate entry: %v", err))
+	} else {
+		logInfo(fmt.Sprintf("[cron] [SYSTEM] added cache rotate entry hourly [%d]", id))
 	}
 	for uid := range Users {
 		// init cron only for authorized in gray database users
@@ -1514,96 +1537,179 @@ func calcHandler(arg string) string {
 	return res
 }
 
+// get contract id by ip
+func ip2contract(ip string) (string, error) {
+	// check in cache first
+	if contractID, inCache := ContractsIPCache[ip]; inCache {
+		logDebug(fmt.Sprintf("[ip2contract] [%s] found in cache", ip))
+		return contractID, nil
+	}
+	// get from api
+	resp, err := apiGet(fmt.Sprintf("/gdb/checkip/%s", ip))
+	if err != nil {
+		return "", err
+	}
+	// update cache
+	contractID := resp["detail"].(string)
+	ContractsIPCache[ip] = contractID
+	return contractID, nil
+
+}
+
+// get contract object
+func getContract(contractID string) (ContractCacheItem, error) {
+	var res ContractCacheItem
+	if item, inCache := ContractsCache[contractID]; inCache {
+		// update LastCall and return contract from cache
+		logDebug(fmt.Sprintf("[getContract] [%s] found in cache", contractID))
+		ContractsCache[contractID].LastCall = time.Now()
+		res = *item
+	} else {
+		// get contract from api
+		item, err := updateCacheContract(contractID)
+		res = item
+		if err != nil {
+			return res, err
+		}
+	}
+	return res, nil
+}
+
+// update contract item cache
+func updateCacheContract(contractID string) (ContractCacheItem, error) {
+	var res ContractCacheItem
+	resp, err := apiGet(fmt.Sprintf("/gdb/%s", contractID))
+	if err != nil {
+		return res, err
+	}
+	// create item if not exists
+	if _, itemExist := ContractsCache[contractID]; !itemExist {
+		logInfo(fmt.Sprintf("[cache] created new item [%s]", contractID))
+		ContractsCache[contractID] = new(ContractCacheItem)
+		ContractsCache[contractID].LastCall = time.Now()
+	}
+	// update data
+	mapstructureDecode(resp["data"], &ContractsCache[contractID].Contract)
+	ContractsCache[contractID].Updated = time.Now()
+	res = *ContractsCache[contractID]
+	// update ip cache
+	for _, ip := range res.Contract.Billing.Inet.IPs {
+		ContractsIPCache[ip] = res.Contract.ContractID
+	}
+	// TODO: update cache file
+	logDebug(fmt.Sprintf("[cache] updated [%s]", contractID))
+	return res, nil
+}
+
+// update and rotate contracts cache
+func rotateCache() {
+	for contractID, item := range ContractsCache {
+		if time.Since(item.LastCall) < 24*time.Hour {
+			updateCacheContract(contractID)
+		} else {
+			// clear cache
+			delete(ContractsCache, contractID)
+			for _, ip := range item.Contract.Billing.Inet.IPs {
+				delete(ContractsIPCache, ip)
+			}
+			logInfo(fmt.Sprintf("[cache] cleared item [%s]", contractID))
+		}
+	}
+}
+
 // client ip / contract id handler
 func clientHandler(client string, args string) (string, tgbotapi.InlineKeyboardMarkup) {
 	var res string                       // text message result
 	var kb tgbotapi.InlineKeyboardMarkup // inline keyboard markup
 	var btns []string                    // switch view buttons text
 	var cData Contract                   // client data struct
-	var endpoint, template, style string
+	var template string
 	logDebug(fmt.Sprintf("[clientHandler] client: %s, args: %s", client, args))
 	view, args := splitArgs(args)
-	// set api request style, view template and buttons
+	// set view template and buttons
 	switch view {
 	case "billing":
-		style = "billing"
 		template = "contract.billing.tmpl"
 		btns = []string{"contacts", "tickets"}
 	case "tickets":
-		style = "short"
 		template = "contract.tickets.tmpl"
 		btns = []string{"contacts", "billing"}
 	default:
-		style = "short"
+		if view == "refresh" {
+			view = ""
+			args = "refresh"
+		}
 		template = "contract.short.tmpl"
 		btns = []string{"tickets", "billing"}
 	}
 	// client is contract id or ip address
-	if isContract(client) {
-		endpoint = fmt.Sprintf("/gdb/%s/?style=%s", client, style)
-	} else {
-		endpoint = fmt.Sprintf("/gdb/by-ip/%s/?style=%s", client, style)
-	}
-	resp, err := apiGet(endpoint)
-	if err != nil {
-		res = fmtErr(err.Error())
-	} else {
-		if style == "billing" {
-			mapstructureDecode(resp["data"], &cData.Billing)
-			mapstructureDecode(resp["meta"], &cData) // contract id
-		} else {
-			mapstructureDecode(resp["data"], &cData)
+	if !isContract(client) {
+		contractID, err := ip2contract(client)
+		if err != nil {
+			return fmtErr(err.Error()), kb
 		}
-		res = fmtObj(cData, template)
-		gdbURL := strings.TrimRight(CFG.GraydbURL, "/") + fmt.Sprintf("/index.php?id_aabon=%d", cData.ClientID)
-		gdbArchiveURL := strings.TrimRight(CFG.GraydbURL, "/") + fmt.Sprintf("/arx_zay.php?dogovor=%s", cData.ContractID)
-		// init keyboard with empty row
-		kb = tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow())
-		// add view buttons to row
-		for _, btn := range btns {
-			// skip tickets button if no tickets
-			if btn == "tickets" && len(cData.Tickets) == 0 {
-				continue
-			}
-			kb.InlineKeyboard[0] = append(
-				kb.InlineKeyboard[0],
-				tgbotapi.NewInlineKeyboardButtonData(btn, fmt.Sprintf("raw edit %s %s", client, btn)),
+		client = contractID
+	}
+	// update cache if needed
+	if strings.Contains(args, "refresh") {
+		updateCacheContract(client)
+	}
+	c, err := getContract(client)
+	if err != nil {
+		return fmtErr(err.Error()), kb
+	}
+	cData = c.Contract
+	res = fmtObj(cData, template)
+	res += printUpdated(c.Updated)
+	gdbURL := strings.TrimRight(CFG.GraydbURL, "/") + fmt.Sprintf("/index.php?id_aabon=%d", cData.ClientID)
+	gdbArchiveURL := strings.TrimRight(CFG.GraydbURL, "/") + fmt.Sprintf("/arx_zay.php?dogovor=%s", cData.ContractID)
+	// init keyboard with empty row
+	kb = tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow())
+	// add view buttons to row
+	for _, btn := range btns {
+		// skip tickets button if no tickets
+		if btn == "tickets" && len(cData.Tickets) == 0 {
+			continue
+		}
+		kb.InlineKeyboard[0] = append(
+			kb.InlineKeyboard[0],
+			tgbotapi.NewInlineKeyboardButtonData(btn, fmt.Sprintf("raw edit %s %s", client, btn)),
+		)
+	}
+	// add tickets commenting buttons
+	if view == "tickets" {
+		for i, ticket := range cData.Tickets {
+			kb.InlineKeyboard = append(kb.InlineKeyboard,
+				tgbotapi.NewInlineKeyboardRow(
+					tgbotapi.NewInlineKeyboardButtonData(
+						fmt.Sprintf(" add comment [%d] (%s)", i+1, ticket.Master),
+						fmt.Sprintf("comment edit %s %d", cData.ContractID, ticket.TicketID),
+					),
+				),
 			)
 		}
-		// add tickets commenting buttons
-		if view == "tickets" {
-			for i, ticket := range cData.Tickets {
-				kb.InlineKeyboard = append(kb.InlineKeyboard,
-					tgbotapi.NewInlineKeyboardRow(
-						tgbotapi.NewInlineKeyboardButtonData(
-							fmt.Sprintf(" add comment [%d] (%s)", i+1, ticket.Master),
-							fmt.Sprintf("comment edit %s %d", cData.ContractID, ticket.TicketID),
-						),
-					),
-				)
-			}
-		}
-		// add other rows
-		kb.InlineKeyboard = append(kb.InlineKeyboard,
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonURL("open in gray database", gdbURL),
-			),
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonURL("tickets archive", gdbArchiveURL),
-			),
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("close", "close"),
-			),
-		)
-		// check client switch ip and port and add port button
-		ip := fullIP(cData.SwitchIP, true)
-		port, err := strconv.Atoi(cData.Port)
-		if ip != "" && err == nil {
-			kb.InlineKeyboard[0] = append(
-				kb.InlineKeyboard[0],
-				tgbotapi.NewInlineKeyboardButtonData(
-					"port info", fmt.Sprintf("raw send %s %d", ip, port)))
-		}
+	}
+	// add other rows
+	kb.InlineKeyboard = append(kb.InlineKeyboard,
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonURL("open in gray database", gdbURL),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonURL("tickets archive", gdbArchiveURL),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("refresh", fmt.Sprintf("raw edit %s %s refresh", client, view)),
+			tgbotapi.NewInlineKeyboardButtonData("close", "close"),
+		),
+	)
+	// check client switch ip and port and add port button
+	ip := fullIP(cData.SwitchIP, true)
+	port, err := strconv.Atoi(cData.Port)
+	if ip != "" && err == nil {
+		kb.InlineKeyboard[0] = append(
+			kb.InlineKeyboard[0],
+			tgbotapi.NewInlineKeyboardButtonData(
+				"port info", fmt.Sprintf("raw send %s %d", ip, port)))
 	}
 	return res, kb
 }
