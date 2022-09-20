@@ -271,7 +271,7 @@ type Contract struct {
 		LDTel TelAccount     `mapstructure:"ld_telephony"`
 		TV    BillingAccount `mapstructure:"television"`
 	} `mapstructure:"billing_accounts"`
-	Tickets []Ticket `mapstructure:"tickets`
+	Tickets []Ticket `mapstructure:"tickets"`
 }
 
 // BillingAccount type
@@ -644,6 +644,9 @@ func initBot() tgbotapi.UpdatesChannel {
 	for uid := range Users {
 		initUserData(uid)
 	}
+	// init contracts cache
+	ContractsCache = make(map[string]*ContractCacheItem)
+	ContractsIPCache = make(map[string]string)
 	// load user data from files
 	d, err := os.Open("data")
 	if err != nil && os.IsNotExist(err) {
@@ -657,28 +660,32 @@ func initBot() tgbotapi.UpdatesChannel {
 	}
 	d.Close()
 	for _, v := range dFiles {
-		uid, _ := strconv.ParseInt(strings.TrimSuffix(v.Name(), ".gob"), 10, 64)
 		logDebug(fmt.Sprintf("[init] Loading data file: %s", v.Name()))
-		loadUserData(uid)
+		filename := strings.TrimSuffix(v.Name(), ".gob")
+		if strings.HasPrefix(filename, "contract_") {
+			loadContractCache(strings.TrimPrefix(filename, "contract_"))
+		} else if filename == "ip_cache" {
+			loadData(filename, &ContractsIPCache)
+		} else {
+			uid, _ := strconv.ParseInt(filename, 10, 64)
+			loadUserData(uid)
+		}
 	}
-	// init contracts cache
-	ContractsCache = make(map[string]*ContractCacheItem)
-	ContractsIPCache = make(map[string]string)
 	// init cron
 	Cron = cron.New()
 	// clear switches pool daily
 	id, err := Cron.AddFunc("0 0 * * *", func() { apiDelete("/pool") })
 	if err != nil {
-		logError(fmt.Sprintf("[cron] [SYSTEM] failed to add clear pool entry: %v", err))
+		logError(fmt.Sprintf("[init] [cron] failed to add clear pool entry: %v", err))
 	} else {
-		logInfo(fmt.Sprintf("[cron] [SYSTEM] added clear pool entry daily [%d]", id))
+		logInfo(fmt.Sprintf("[init] [cron] added clear pool entry daily [%d]", id))
 	}
 	// rotate contracts cache hourly
 	id, err = Cron.AddFunc("@every 1h", func() { rotateCache() })
 	if err != nil {
-		logError(fmt.Sprintf("[cron] [SYSTEM] failed to add cache rotate entry: %v", err))
+		logError(fmt.Sprintf("[init] [cron] failed to add cache rotate entry: %v", err))
 	} else {
-		logInfo(fmt.Sprintf("[cron] [SYSTEM] added cache rotate entry hourly [%d]", id))
+		logInfo(fmt.Sprintf("[init] [cron] added cache rotate entry hourly [%d]", id))
 	}
 	for uid := range Users {
 		// init cron only for authorized in gray database users
@@ -850,40 +857,67 @@ func writeYML(cfg interface{}, filename string) error {
 	return nil
 }
 
-// save user data to file (only tickets)
-func saveUserData(uid int64) error {
-	f, err := os.Create(fmt.Sprintf("data/%d.gob", uid))
+// save data to file
+func saveData(filename string, data interface{}) error {
+	f, err := os.Create(fmt.Sprintf("data/%s.gob", filename))
 	defer f.Close()
 	if err != nil {
-		logError(fmt.Sprintf("[save] Failed to open file: %v", err))
+		logError(fmt.Sprintf("[save] Failed to open file [%s]: %v", filename, err))
 		return err
 	}
 	encoder := gob.NewEncoder(f)
-	err = encoder.Encode(Data[uid].Tickets)
+	err = encoder.Encode(data)
 	if err != nil {
-		logError(fmt.Sprintf("[save] Failed to encode data: %v", err))
+		logError(fmt.Sprintf("[save] Failed to encode data [%s]: %v", filename, err))
 		return err
 	}
 	return nil
 }
 
-// load user data from file (only tickets)
-func loadUserData(uid int64) error {
-	var d Tickets
-	f, err := os.Open(fmt.Sprintf("data/%d.gob", uid))
+// load data from file
+func loadData(filename string, data interface{}) error {
+	f, err := os.Open(fmt.Sprintf("data/%s.gob", filename))
 	defer f.Close()
 	if err != nil {
-		logError(fmt.Sprintf("[load] Failed to open file: %v", err))
+		logError(fmt.Sprintf("[load] Failed to open file [%s]: %v", filename, err))
 		return err
 	}
 	decoder := gob.NewDecoder(f)
-	err = decoder.Decode(&d)
+	err = decoder.Decode(data)
 	if err != nil {
-		logError(fmt.Sprintf("[load] Failed to decode data: %v", err))
+		logError(fmt.Sprintf("[load] Failed to decode data [%s]: %v", filename, err))
 		return err
 	}
-	Data[uid].Tickets = d
 	return nil
+}
+
+// save user data to file (only tickets)
+func saveUserData(uid int64) error {
+	filename := strconv.FormatInt(uid, 10)
+	return saveData(filename, Data[uid].Tickets)
+}
+
+// load user data from file (only tickets)
+func loadUserData(uid int64) error {
+	filename := strconv.FormatInt(uid, 10)
+	return loadData(filename, &Data[uid].Tickets)
+}
+
+// save contract cache to file
+func saveContractCache(contractID string) error {
+	filename := "contract_" + contractID
+	return saveData(filename, ContractsCache[contractID])
+}
+
+// load contract cache from file
+func loadContractCache(contractID string) error {
+	var d ContractCacheItem
+	filename := "contract_" + contractID
+	err := loadData(filename, &d)
+	if err == nil {
+		ContractsCache[contractID] = &d
+	}
+	return err
 }
 
 // add/delete user
@@ -1596,7 +1630,9 @@ func updateCacheContract(contractID string) (ContractCacheItem, error) {
 	for _, ip := range res.Contract.Billing.Inet.IPs {
 		ContractsIPCache[ip] = res.Contract.ContractID
 	}
-	// TODO: update cache file
+	// update cache files
+	saveContractCache(contractID)
+	saveData("ip_cache", &ContractsIPCache)
 	logDebug(fmt.Sprintf("[cache] updated [%s]", contractID))
 	return res, nil
 }
@@ -1609,9 +1645,11 @@ func rotateCache() {
 		} else {
 			// clear cache
 			delete(ContractsCache, contractID)
+			os.Remove(fmt.Sprintf("data/contract_%s.gob", contractID))
 			for _, ip := range item.Contract.Billing.Inet.IPs {
 				delete(ContractsIPCache, ip)
 			}
+			saveData("ip_cache", &ContractsIPCache)
 			logInfo(fmt.Sprintf("[cache] cleared item [%s]", contractID))
 		}
 	}
