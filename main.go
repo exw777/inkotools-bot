@@ -30,14 +30,16 @@ const CFGFILE string = "config/main.yml"
 
 // Config struct
 type Config struct {
-	BotToken     string `yaml:"bot_token"`
-	UseWebhook   bool   `yaml:"use_webhook"`
-	WebhookURL   string `yaml:"webhook_url"`
-	ListenPort   string `yaml:"listen_port"`
-	Admin        int64  `yaml:"admin"`
-	InkoToolsAPI string `yaml:"inkotools_api_url"`
-	GraydbURL    string `yaml:"graydb_url"`
-	DebugMode    bool   `yaml:"debug"`
+	BotToken      string `yaml:"bot_token"`
+	UseWebhook    bool   `yaml:"use_webhook"`
+	WebhookURL    string `yaml:"webhook_url"`
+	ListenPort    string `yaml:"listen_port"`
+	Admin         int64  `yaml:"admin"`
+	InkoToolsAPI  string `yaml:"inkotools_api_url"`
+	GraydbURL     string `yaml:"graydb_url"`
+	CacheLifetime string `yaml:"cache_lifetime"`
+	CacheInterval string `yaml:"cache_interval"`
+	DebugMode     bool   `yaml:"debug"`
 }
 
 // UserConfig struct
@@ -680,12 +682,12 @@ func initBot() tgbotapi.UpdatesChannel {
 	} else {
 		logInfo(fmt.Sprintf("[init] [cron] added clear pool entry daily [%d]", id))
 	}
-	// rotate contracts cache hourly
-	id, err = Cron.AddFunc("@every 1h", func() { rotateCache() })
+	// rotate contracts cache
+	id, err = Cron.AddFunc(fmt.Sprintf("@every %s", CFG.CacheInterval), func() { rotateCache() })
 	if err != nil {
 		logError(fmt.Sprintf("[init] [cron] failed to add cache rotate entry: %v", err))
 	} else {
-		logInfo(fmt.Sprintf("[init] [cron] added cache rotate entry hourly [%d]", id))
+		logInfo(fmt.Sprintf("[init] [cron] added cache rotate entry every %s [%d]", CFG.CacheInterval, id))
 	}
 	for uid := range Users {
 		// init cron only for authorized in gray database users
@@ -1639,8 +1641,9 @@ func updateCacheContract(contractID string) (ContractCacheItem, error) {
 
 // update and rotate contracts cache
 func rotateCache() {
+	lifetime, _ := time.ParseDuration(CFG.CacheLifetime)
 	for contractID, item := range ContractsCache {
-		if time.Since(item.LastCall) < 24*time.Hour {
+		if time.Since(item.LastCall) < lifetime {
 			updateCacheContract(contractID)
 		} else {
 			// clear cache
