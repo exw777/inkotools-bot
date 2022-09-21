@@ -2069,7 +2069,7 @@ func updateTickets(uid int64) error {
 		oldTickets[e.TicketID] = e.Comments
 		oldTags[e.TicketID] = e.Tag
 	}
-	// clear cache before update
+	// clear tickets cache before update
 	Data[uid].Tickets.Data = nil
 	mapstructureDecode(resp, &Data[uid].Tickets)
 	// scan changes
@@ -2079,13 +2079,19 @@ func updateTickets(uid int64) error {
 			// new ticket notification
 			isModified = true
 			logInfo(fmt.Sprintf("[tickets] [%s] New ticket: %s/%d", Users[uid].Name, e.ContractID, e.TicketID))
+			// new ticket - create contract cache
+			updateCacheContract(e.ContractID)
 			if Users[uid].NotifyNew {
 				res := fmtObj(e, "ticket.user.tmpl")
-				kb := genKeyboard([][]map[string]string{{
-					{"comment": fmt.Sprintf("comment edit %s %d", e.ContractID, e.TicketID)},
-					{"tag": fmt.Sprintf("tag edit %d", e.TicketID)},
-					{"close": "close"},
-				}})
+				kb := genKeyboard([][]map[string]string{
+					{
+						{"comment": fmt.Sprintf("comment edit %s %d", e.ContractID, e.TicketID)},
+						{"tag": fmt.Sprintf("tag edit %d", e.TicketID)},
+					}, {
+						{"all tickets": "tickets edit list"},
+						{"close": "close"},
+					},
+				})
 				sendMessage(uid, res, kb)
 			}
 		} else {
@@ -2099,16 +2105,20 @@ func updateTickets(uid int64) error {
 			if lastComment.Author != Data[uid].Tickets.Meta.User {
 				if c > len(oldTickets[e.TicketID]) && !isModified {
 					// new comment notification (only for old tickets)
-					logInfo(fmt.Sprintf("[tickets] [%s] %s commented %s/%d: %s",
-						Users[uid].Name, lastComment.Author, e.ContractID, e.TicketID, lastComment.Comment))
+					logInfo(fmt.Sprintf("[tickets] [%s] %s commented %s/%d",
+						Users[uid].Name, lastComment.Author, e.ContractID, e.TicketID))
 					if Users[uid].NotifyUpdate {
-						res := fmt.Sprintf("/%s %s\n%s: %s",
+						res := fmt.Sprintf("New comment /%s %s\n%s: %s",
 							e.ContractID, fmtAddress(e.Address), lastComment.Author, lastComment.Comment)
-						kb := genKeyboard([][]map[string]string{{
-							{"comment": fmt.Sprintf("comment edit %s %d", e.ContractID, e.TicketID)},
-							{"tag": fmt.Sprintf("tag edit %d", e.TicketID)},
-							{"close": "close"},
-						}})
+						kb := genKeyboard([][]map[string]string{
+							{
+								{"comment": fmt.Sprintf("comment edit %s %d", e.ContractID, e.TicketID)},
+								{"tag": fmt.Sprintf("tag edit %d", e.TicketID)},
+							}, {
+								{"all tickets": "tickets edit list"},
+								{"close": "close"},
+							},
+						})
 						sendMessage(uid, res, kb)
 					}
 				}
