@@ -1387,7 +1387,34 @@ func portSummary(ip string, port string, style string) (string, error) {
 	} // end full style
 
 	logDebug(fmt.Sprintf("[portSummary] pInfo: %+v", pInfo))
-	res = fmtObj(pInfo, "port.tmpl")
+	// search for related contracts
+	var rList []string
+	var relatedContracts string
+	for _, a := range pInfo.ACL.Entries {
+		if a.Mode == "permit" {
+			cID, err := ip2contract(a.IP)
+			if err == nil {
+				rList = append(rList, cID)
+			}
+		}
+	}
+	for _, a := range pInfo.ARP.Entries {
+		cID, err := ip2contract(a.IP)
+		if err == nil {
+			rList = append(rList, cID)
+		}
+	}
+	// remove duplicates
+	for _, s := range rList {
+		if !strings.Contains(relatedContracts, s) {
+			relatedContracts += " /" + s
+		}
+	}
+	if relatedContracts != "" {
+		res += "Related contracts:" + relatedContracts + "\n"
+	}
+
+	res += fmtObj(pInfo, "port.tmpl")
 	res += printUpdated(time.Now())
 	// clear previous errors (escalated to template)
 	err = nil
