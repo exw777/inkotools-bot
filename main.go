@@ -401,7 +401,13 @@ const HELPADMIN string = `
 `
 
 // UserTags - icons for custom user tags in tickets
-const UserTags string = "🆕:⚒:🚨:👁‍🗨:📟:🔫:🪜:🧵:🛅:🌀:🔐:♾:🌚:🕑:✅"
+const UserTags string = "⚒:🚨:👁‍🗨:📟:🔫:🪜:🧵:🛅:🌀:🔐:♾:🌚:🕑:✅"
+
+// TagNew - tag for new tickets
+const TagNew string = "🆕"
+
+// TagComment - tag for tickets with new comments
+const TagComment string = "🔅"
 
 // BotCommands const
 var BotCommands = []tgbotapi.BotCommand{
@@ -2081,6 +2087,8 @@ func updateTickets(uid int64) error {
 			logInfo(fmt.Sprintf("[tickets] [%s] New ticket: %s/%d", Users[uid].Name, e.ContractID, e.TicketID))
 			// new ticket - create contract cache
 			updateCacheContract(e.ContractID)
+			// set new tag for ticket
+			Data[uid].Tickets.Data[i].Tag = TagNew
 			if Users[uid].NotifyNew {
 				res := fmtObj(e, "ticket.user.tmpl")
 				kb := genKeyboard([][]map[string]string{
@@ -2107,6 +2115,8 @@ func updateTickets(uid int64) error {
 					// new comment notification (only for old tickets)
 					logInfo(fmt.Sprintf("[tickets] [%s] %s commented %s/%d",
 						Users[uid].Name, lastComment.Author, e.ContractID, e.TicketID))
+					// set comment tag for ticket
+					Data[uid].Tickets.Data[i].Tag = TagComment
 					if Users[uid].NotifyUpdate {
 						res := fmt.Sprintf("New comment /%s %s\n%s: %s",
 							e.ContractID, fmtAddress(e.Address), lastComment.Author, lastComment.Comment)
