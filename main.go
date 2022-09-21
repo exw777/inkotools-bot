@@ -2218,11 +2218,21 @@ func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarku
 			}
 			// other buttons rows
 			buttons = append(buttons, []map[string]string{
-				{"all tickets": "tickets edit list"},
 				{"client info": fmt.Sprintf("raw send %s", ticket.ContractID)},
+			})
+			b := &buttons[len(buttons)-1]
+			// get contract info
+			c, err := getContract(ticket.ContractID)
+			if err == nil && c.Contract.SwitchIP != "" && c.Contract.Port != "" {
+				// insert port info in second element of current last row
+				*b = append(*b, map[string]string{
+					"port info": fmt.Sprintf("raw send %s %s", c.Contract.SwitchIP, c.Contract.Port),
+				})
+			}
+			*b = append(*b, []map[string]string{
 				{"comment": fmt.Sprintf("comment edit %s %d", ticket.ContractID, ticket.TicketID)},
 				{"tag": fmt.Sprintf("tag edit %d", ticket.TicketID)},
-			})
+			}...)
 		} else {
 			res = fmtObj(tickets, "ticket.list.tmpl")
 			// generate index buttons
@@ -2247,6 +2257,11 @@ func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarku
 		{"refresh": fmt.Sprintf("tickets edit refresh %s", cmd)},
 		{"close": "close"},
 	})
+	if strings.Contains(cmd, "details") {
+		// insert all tickets into last row first button
+		b := &buttons[len(buttons)-1]
+		*b = append([]map[string]string{{"all tickets": "tickets edit list"}}, *b...)
+	}
 	res += printUpdated(Data[uid].Tickets.Updated)
 	kb = genKeyboard(buttons)
 	return res, kb
