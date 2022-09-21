@@ -1332,11 +1332,16 @@ func portSummary(ip string, port string, style string) (string, error) {
 				}
 			}
 
-			// get arp only if mac address table is not empty
-			if len(pInfo.MAC.Entries) > 0 {
+			// get arp only if mac address table is not empty and not more than 5 addresses
+			if x := len(pInfo.MAC.Entries); x > 0 && x < 5 {
 				// get arp table for acl permit ip
 				for _, a := range pInfo.ACL.Entries {
 					if a.Mode == "permit" {
+						if a.IP == "0.0.0.0" {
+							// skip arpsearch for 0.0.0.0
+							logWarning(fmt.Sprintf("[%s][%s] Invalid permit ACL", ip, port))
+							continue
+						}
 						resp, err = requestAPI("POST", "/arpsearch", map[string]interface{}{"ip": a.IP})
 						if err != nil {
 							logWarning(fmt.Sprintf("[ARP] failed to get %s", a.IP))
