@@ -2,4 +2,11 @@
 <b>{{ inc $i }} </b>
 {{- if .Tag }}{{ .Tag }}
 {{- end }} /{{ .ContractID }} {{ fmtAddress .Address }}
+{{- if eq .Tag "🕑" }}
+{{- $cnt := len .Comments }}
+{{- if gt $cnt 0 }}
+{{- $t := index .Comments (add $cnt -1) }}
+{{ $t.Comment }}
+{{- end }}
+{{- end }}
 {{ end -}}

@@ -260,6 +260,8 @@ type Contract struct {
 	City       string   `mapstructure:"city"`
 	Street     string   `mapstructure:"street"`
 	House      string   `mapstructure:"house"`
+	Entrance   string   `mapstructure:"entrance"`
+	Floor      string   `mapstructure:"floor"`
 	Room       string   `mapstructure:"room"`
 	Company    string   `mapstructure:"company"`
 	Office     string   `mapstructure:"office"`
@@ -470,6 +472,11 @@ func fullIP(ip string, isSwitch bool) string {
 	return ""
 }
 
+// very simple check for public ip
+func isPIP(ip string) bool {
+	return !strings.HasPrefix(ip, "192.168.")
+}
+
 // check if string is contract id
 func isContract(s string) bool {
 	rgx, _ := regexp.Compile(`^[0-9]{5}$`)
@@ -540,6 +547,49 @@ func fmtPhone(s string) string {
 func fmtAddress(s string) string {
 	re, _ := regexp.Compile(`Коломна |ул\. |д\. |п\. \d+ |э\. \d+ |офис/цех\. | 0`)
 	return re.ReplaceAllString(s, "")
+}
+
+// generate yandex maps link
+func genMapURL(c Contract) string {
+	var res, city string
+	// city modification
+	switch c.City {
+	case "Сосновый бор":
+		city = "д. Негомож, городок Сосновый бор"
+	case "Луховицы":
+		city = "д. Щурово, городок Луховицы-3"
+	case "Ларцевы Поляны":
+		city = "г. Коломна, Ларцевы Поляны"
+	case "Радужный":
+		city = "п. Радужный"
+	case "":
+		city = "г. Коломна"
+	default:
+		city = "г. " + c.City
+	}
+	res = "https://yandex.ru/maps/?text=Московская область, " + city
+	if c.Street != "" {
+		res += ", улица " + c.Street
+	}
+	if c.House != "" {
+		res += ", дом " + c.House
+	}
+	if c.Entrance != "" {
+		res += ", подъезд " + c.Entrance
+	}
+	if c.Floor != "" {
+		res += ", этаж " + c.Floor
+	}
+	if c.Room != "" {
+		res += ", квартира " + c.Room
+	}
+	if c.Office != "" {
+		res += ", офис " + c.Office
+	}
+	if c.Company != "" {
+		res += ", " + c.Company
+	}
+	return res
 }
 
 // mapstructure decode with custom date format
@@ -776,6 +826,7 @@ func initConfig() error {
 		"fmtPhone":   fmtPhone,
 		"fmtAddress": fmtAddress,
 		"inc":        func(x int) int { return x + 1 },
+		"add":        func(x, y int) int { return x + y },
 	}
 	// load templates
 	TPL, err = template.New("templates").Funcs(funcMap).ParseGlob("templates/*")
@@ -1408,6 +1459,8 @@ func portSummary(ip string, port string, style string) (string, error) {
 	for _, s := range rList {
 		if !strings.Contains(relatedContracts, s) {
 			relatedContracts += " /" + s
+			// check contract cache and update if needed, will be cleared as usual
+			go getContract(s)
 		}
 	}
 	if relatedContracts != "" {
@@ -1715,9 +1768,9 @@ func clientHandler(client string, args string) (string, tgbotapi.InlineKeyboardM
 		btns = []string{"contacts", "billing"}
 	default:
 		if view == "refresh" {
-			view = ""
 			args = "refresh"
 		}
+		view = "contacts"
 		template = "contract.short.tmpl"
 		btns = []string{"tickets", "billing"}
 	}
@@ -1742,6 +1795,7 @@ func clientHandler(client string, args string) (string, tgbotapi.InlineKeyboardM
 	res += printUpdated(c.Updated)
 	gdbURL := strings.TrimRight(CFG.GraydbURL, "/") + fmt.Sprintf("/index.php?id_aabon=%d", cData.ClientID)
 	gdbArchiveURL := strings.TrimRight(CFG.GraydbURL, "/") + fmt.Sprintf("/arx_zay.php?dogovor=%s", cData.ContractID)
+	gdbPaymentURL := strings.TrimRight(CFG.GraydbURL, "/") + fmt.Sprintf("/bil_pay.php?nome_dogo=%s", cData.ContractID)
 	// init keyboard with empty row
 	kb = tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow())
 	// add view buttons to row
@@ -1755,8 +1809,38 @@ func clientHandler(client string, args string) (string, tgbotapi.InlineKeyboardM
 			tgbotapi.NewInlineKeyboardButtonData(btn, fmt.Sprintf("raw edit %s %s", client, btn)),
 		)
 	}
-	// add tickets commenting buttons
-	if view == "tickets" {
+	// buttons per view
+	if view == "contacts" {
+		kb.InlineKeyboard = append(kb.InlineKeyboard,
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonURL("map", genMapURL(cData)),
+				tgbotapi.NewInlineKeyboardButtonURL("archive", gdbArchiveURL),
+			),
+		)
+	} else if view == "billing" {
+		for _, ip := range cData.Billing.Inet.IPs {
+			cRow := tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData(
+					fmt.Sprintf("ping %s", ip),
+					fmt.Sprintf("ping send %s", ip),
+				),
+			)
+			if isPIP(ip) {
+				cRow = append(cRow,
+					tgbotapi.NewInlineKeyboardButtonData(
+						fmt.Sprintf("ip calc %s", ip),
+						fmt.Sprintf("calc send %s", ip),
+					),
+				)
+			}
+			kb.InlineKeyboard = append(kb.InlineKeyboard, cRow)
+		}
+		kb.InlineKeyboard = append(kb.InlineKeyboard,
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonURL("payments", gdbPaymentURL),
+			),
+		)
+	} else if view == "tickets" {
 		for i, ticket := range cData.Tickets {
 			kb.InlineKeyboard = append(kb.InlineKeyboard,
 				tgbotapi.NewInlineKeyboardRow(
@@ -1768,16 +1852,11 @@ func clientHandler(client string, args string) (string, tgbotapi.InlineKeyboardM
 			)
 		}
 	}
-	// add other rows
+	// common buttons for all views
 	kb.InlineKeyboard = append(kb.InlineKeyboard,
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonURL("open in gray database", gdbURL),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonURL("tickets archive", gdbArchiveURL),
-		),
-		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("refresh", fmt.Sprintf("raw edit %s %s refresh", client, view)),
+			tgbotapi.NewInlineKeyboardButtonURL("graydb", gdbURL),
 			tgbotapi.NewInlineKeyboardButtonData("close", "close"),
 		),
 	)
@@ -2117,21 +2196,19 @@ func updateTickets(uid int64) error {
 			// new ticket notification
 			isModified = true
 			logInfo(fmt.Sprintf("[tickets] [%s] New ticket: %s/%d", Users[uid].Name, e.ContractID, e.TicketID))
-			// new ticket - create contract cache
-			updateCacheContract(e.ContractID)
+			// new ticket - check that contract cache exists
+			getContract(e.ContractID)
 			// set new tag for ticket
 			Data[uid].Tickets.Data[i].Tag = TagNew
 			if Users[uid].NotifyNew {
-				res := fmtObj(e, "ticket.user.tmpl")
-				kb := genKeyboard([][]map[string]string{
-					{
-						{"comment": fmt.Sprintf("comment edit %s %d", e.ContractID, e.TicketID)},
-						{"tag": fmt.Sprintf("tag edit %d", e.TicketID)},
-					}, {
-						{"all tickets": "tickets edit list"},
-						{"close": "close"},
-					},
-				})
+				res := TagNew + fmtObj(e, "ticket.user.tmpl")
+				kb := genTicketKeyboard(e)
+				kb.InlineKeyboard = append(kb.InlineKeyboard,
+					tgbotapi.NewInlineKeyboardRow(
+						tgbotapi.NewInlineKeyboardButtonData("all tickets", "tickets edit list"),
+						tgbotapi.NewInlineKeyboardButtonData("close", "close"),
+					),
+				)
 				sendMessage(uid, res, kb)
 			}
 		} else {
@@ -2175,6 +2252,41 @@ func updateTickets(uid int64) error {
 	return nil
 }
 
+// generate ticket detetail keybord with 2 rows
+func genTicketKeyboard(ticket Ticket) tgbotapi.InlineKeyboardMarkup {
+	kb := tgbotapi.NewInlineKeyboardMarkup()
+	// contract related buttons
+	c, err := getContract(ticket.ContractID)
+	if err == nil {
+		cRow := tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonURL("map", genMapURL(c.Contract)))
+		if c.Contract.SwitchIP != "" && c.Contract.Port != "" {
+			cRow = append(cRow,
+				tgbotapi.NewInlineKeyboardButtonData(
+					"port info",
+					fmt.Sprintf("raw send %s %s", c.Contract.SwitchIP, c.Contract.Port),
+				),
+			)
+		}
+		kb.InlineKeyboard = append(kb.InlineKeyboard, cRow)
+	}
+	// other buttons rows
+	kb.InlineKeyboard = append(kb.InlineKeyboard,
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(
+				"client",
+				fmt.Sprintf("raw send %s", ticket.ContractID),
+			),
+			tgbotapi.NewInlineKeyboardButtonData("comment",
+				fmt.Sprintf("comment edit %s %d", ticket.ContractID, ticket.TicketID),
+			),
+			tgbotapi.NewInlineKeyboardButtonData("tag",
+				fmt.Sprintf("tag edit %d", ticket.TicketID),
+			),
+		),
+	)
+	return kb
+}
+
 // get list of gray database tickets
 func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarkup) {
 	var res string
@@ -2214,25 +2326,15 @@ func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarku
 			res += fmt.Sprintf("\nTicket: <b>%d/%d</b>", page, total)
 			// pagination row
 			if total > 1 {
-				buttons = append(buttons, rowPagination("tickets edit details", page, total)...)
+				buttons = rowPagination("tickets edit details", page, total)
 			}
-			// other buttons rows
-			buttons = append(buttons, []map[string]string{
-				{"client info": fmt.Sprintf("raw send %s", ticket.ContractID)},
-			})
-			b := &buttons[len(buttons)-1]
-			// get contract info
-			c, err := getContract(ticket.ContractID)
-			if err == nil && c.Contract.SwitchIP != "" && c.Contract.Port != "" {
-				// insert port info in second element of current last row
-				*b = append(*b, map[string]string{
-					"port info": fmt.Sprintf("raw send %s %s", c.Contract.SwitchIP, c.Contract.Port),
-				})
-			}
-			*b = append(*b, []map[string]string{
-				{"comment": fmt.Sprintf("comment edit %s %d", ticket.ContractID, ticket.TicketID)},
-				{"tag": fmt.Sprintf("tag edit %d", ticket.TicketID)},
-			}...)
+			// insert first 'all' button
+			buttons[0] = append([]map[string]string{{"all": "tickets edit list"}}, buttons[0]...)
+			k1 := genKeyboard(buttons)
+			k2 := genTicketKeyboard(ticket)
+			// append first row for navigation and two rows for ticket details
+			kb = tgbotapi.NewInlineKeyboardMarkup()
+			kb.InlineKeyboard = append(k1.InlineKeyboard, k2.InlineKeyboard...)
 		} else {
 			res = fmtObj(tickets, "ticket.list.tmpl")
 			// generate index buttons
@@ -2250,20 +2352,17 @@ func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarku
 			if len(row) > 0 {
 				buttons = append(buttons, row)
 			}
+			kb = genKeyboard(buttons)
 		}
 	}
 	// common row with refresh and close buttons
-	buttons = append(buttons, []map[string]string{
-		{"refresh": fmt.Sprintf("tickets edit refresh %s", cmd)},
-		{"close": "close"},
-	})
-	if strings.Contains(cmd, "details") {
-		// insert all tickets into last row first button
-		b := &buttons[len(buttons)-1]
-		*b = append([]map[string]string{{"all tickets": "tickets edit list"}}, *b...)
-	}
+	kb.InlineKeyboard = append(kb.InlineKeyboard,
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("refresh", fmt.Sprintf("tickets edit refresh %s", cmd)),
+			tgbotapi.NewInlineKeyboardButtonData("close", "close"),
+		),
+	)
 	res += printUpdated(Data[uid].Tickets.Updated)
-	kb = genKeyboard(buttons)
 	return res, kb
 }
 
@@ -2548,6 +2647,14 @@ func main() {
 				res, kb = commentHandler(rawCmd, uid, msg.MessageID)
 			case "tag":
 				res, kb = tagHandler(rawCmd, uid)
+			// ping and calc are called from client billing view
+			case "calc":
+				res, kb = calcHandler(rawCmd), closeButton()
+			case "ping":
+				res = pingHandler(rawCmd, uid)
+				Data[uid].Mode = mode
+				Bot.Request(tgbotapi.NewDeleteMessage(uid, msg.MessageID))
+				goto CALLBACK
 			case "close":
 				// delete message on close button
 				_, err := Bot.Request(tgbotapi.NewDeleteMessage(uid, msg.MessageID))
