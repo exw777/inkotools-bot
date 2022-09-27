@@ -2657,12 +2657,20 @@ func main() {
 				goto CALLBACK
 			case "close":
 				// delete message on close button
-				_, err := Bot.Request(tgbotapi.NewDeleteMessage(uid, msg.MessageID))
-				if err != nil {
-					logError(fmt.Sprintf("[close] %v", err))
-					res = fmtErr(err.Error())
+				msgDate := time.Unix(int64(msg.Date), 0)
+				if time.Since(msgDate) > time.Hour*48 {
+					logWarning("[close] Message is older than 48h")
+					res = "<b>Bot cannot delete messages older than 48 hours!</b> \n\n" +
+						"<i>This is is a telegram api limitation. You can delete this message manually.</i> \n\n" +
+						"<code>https://core.telegram.org/bots/api#deletemessage</code>"
 				} else {
-					continue
+					_, err := Bot.Request(tgbotapi.NewDeleteMessage(uid, msg.MessageID))
+					if err != nil {
+						logError(fmt.Sprintf("[close] %v", err))
+						res = fmtErr(err.Error())
+					} else {
+						continue
+					}
 				}
 			default:
 				logWarning(fmt.Sprintf("[callback] wrong mode: %s", mode))
