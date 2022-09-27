@@ -1309,6 +1309,31 @@ func portSummary(ip string, port string, style string) (string, error) {
 		mapstructure.Decode(resp["data"], &pInfo.Counters)
 	}
 
+	// check if port is transit
+	portIsTransit := false
+	// get list of access ports
+	resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/", ip))
+	if err == nil {
+		mapstructure.Decode(resp["data"].(map[string]interface{})["access_ports"], &accessPorts)
+	}
+	if !intInList(pInfo.PortNumber, accessPorts) {
+		portIsTransit = true
+	}
+
+	// get mac table only if link is up
+	if pInfo.LinkUp {
+		if portIsTransit {
+			pInfo.MAC.Error = "Transit ports are not supported"
+		} else {
+			resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/mac", ip, port))
+			if err != nil {
+				pInfo.MAC.Error = err.Error()
+			} else {
+				mapstructure.Decode(resp["data"], &pInfo.MAC.Entries)
+			}
+		}
+	}
+
 	// all other data for full style
 	if style == "full" {
 
@@ -1316,12 +1341,6 @@ func portSummary(ip string, port string, style string) (string, error) {
 		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/bandwidth", ip, port))
 		if err == nil {
 			mapstructure.Decode(resp["data"], &pInfo.Bandwidth)
-		}
-
-		// get list of access ports
-		resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/", ip))
-		if err == nil {
-			mapstructure.Decode(resp["data"].(map[string]interface{})["access_ports"], &accessPorts)
 		}
 
 		// get vlan
@@ -1333,11 +1352,10 @@ func portSummary(ip string, port string, style string) (string, error) {
 		}
 
 		// all other data only for access ports
-		if !intInList(pInfo.PortNumber, accessPorts) {
+		if portIsTransit {
 			e := "Transit ports are not supported"
 			pInfo.ACL.Error = e
 			pInfo.Multicast.Error = e
-			pInfo.MAC.Error = e
 			pInfo.ARP.Error = e
 		} else {
 
@@ -1370,16 +1388,6 @@ func portSummary(ip string, port string, style string) (string, error) {
 							mapstructure.Decode(resp["data"], &pInfo.Multicast.Groups)
 						}
 					}
-				}
-			}
-
-			// get mac table only if link is up
-			if pInfo.LinkUp {
-				resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/mac", ip, port))
-				if err != nil {
-					pInfo.MAC.Error = err.Error()
-				} else {
-					mapstructure.Decode(resp["data"], &pInfo.MAC.Entries)
 				}
 			}
 

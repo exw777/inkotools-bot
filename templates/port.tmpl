@@ -161,12 +161,12 @@
 {{ end }}
 
 {{- template "port" .Slots }}
+{{- template "mac" .MAC }}
 {{- template "counters" .Counters }}
 {{- if eq .Style "full" }}
 {{- template "bandwidth" .Bandwidth }}
 {{- template "vlan" .VLAN }}
 {{- template "acl" .ACL }}
 {{- template "mcast" .Multicast }}
-{{- template "mac" .MAC }}
 {{- template "arp" .ARP }}
 {{- end -}}
