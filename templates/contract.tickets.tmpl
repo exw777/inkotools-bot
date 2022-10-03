@@ -1,8 +1,0 @@
-[<code>{{ .ContractID }}</code>]
-{{- if .Tickets }}
-{{- range $i, $e := .Tickets }}
-<b>[{{ inc $i }}]</b> {{ template "ticket.contract.tmpl" . }}
-{{- end }}
-{{- else }}
-No tickets
-{{- end }}

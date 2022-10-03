@@ -6,8 +6,5 @@ webhook_url: https://example.com/api/       # wehook url which is routed to app
 listen_port: "9000"                         # internal port app listen on
 admin: 123456789                            # telegram user id for admin
 inkotools_api_url: http://127.0.0.1:9999/   # url to inkotools api service
-graydb_url: https://graydb.inko.tools/      # url to gray database
-cache_lifetime: 24h                         # lifetime from last call of cache
-cache_interval: 1h                          # interval for cache rotation
 debug: false                                # enable debug logging
 ...

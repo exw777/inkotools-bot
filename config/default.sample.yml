@@ -1,9 +1,0 @@
-# sample of default.yml configuration file
----
-refresh_enabled: false  # auto refresh tickets
-refresh_interval: 15m   # refresh interval
-refresh_start: "09:00"  # start autorefresh time
-refresh_stop: "20:00"   # end autorefresh time
-notify_new: false       # notify new tickets
-notify_update: false    # notify new comments on ticket
-...

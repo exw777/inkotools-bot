@@ -2,12 +2,10 @@ package main
 
 import (
 	"bytes"
-	"encoding/gob"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
-	"math/rand"
 	"net/http"
 	"os"
 	"regexp"
@@ -30,46 +28,24 @@ const CFGFILE string = "config/main.yml"
 
 // Config struct
 type Config struct {
-	BotToken      string `yaml:"bot_token"`
-	UseWebhook    bool   `yaml:"use_webhook"`
-	WebhookURL    string `yaml:"webhook_url"`
-	ListenPort    string `yaml:"listen_port"`
-	Admin         int64  `yaml:"admin"`
-	InkoToolsAPI  string `yaml:"inkotools_api_url"`
-	GraydbURL     string `yaml:"graydb_url"`
-	CacheLifetime string `yaml:"cache_lifetime"`
-	CacheInterval string `yaml:"cache_interval"`
-	DebugMode     bool   `yaml:"debug"`
+	BotToken     string `yaml:"bot_token"`
+	UseWebhook   bool   `yaml:"use_webhook"`
+	WebhookURL   string `yaml:"webhook_url"`
+	ListenPort   string `yaml:"listen_port"`
+	Admin        int64  `yaml:"admin"`
+	InkoToolsAPI string `yaml:"inkotools_api_url"`
+	DebugMode    bool   `yaml:"debug"`
 }
 
 // UserConfig struct
 type UserConfig struct {
-	Name            string `yaml:"name"`
-	Token           string `yaml:"token"`
-	Username        string `yaml:"username"` // returned from api by token, saved for templates
-	RefreshEnabled  bool   `yaml:"refresh_enabled"`
-	RefreshInterval string `yaml:"refresh_interval"`
-	RefreshStart    string `yaml:"refresh_start"`
-	RefreshStop     string `yaml:"refresh_stop"`
-	NotifyNew       bool   `yaml:"notify_new"`
-	NotifyUpdate    bool   `yaml:"notify_update"`
+	Name string `yaml:"name"`
 }
 
 // UserData struct
 type UserData struct {
-	Mode    string // command mode
-	TMP     string // to save temporary data between messages
-	Cron    map[string]cron.EntryID
-	Tickets Tickets
-}
-
-// Tickets struct
-type Tickets struct {
-	Data []Ticket `mapstructure:"data"`
-	Meta struct {
-		User string `mapstructure:"username"`
-	} `mapstructure:"meta"`
-	Updated time.Time
+	Mode string // command mode
+	TMP  string // to save temporary data between messages
 }
 
 // Cron - cron object
@@ -250,93 +226,6 @@ type DBSearch struct {
 	} `mapstructure:"meta"`
 }
 
-// Contract type
-type Contract struct {
-	ContractID string   `mapstructure:"contract_id"`
-	ClientID   uint     `mapstructure:"client_id"`
-	Terminated bool     `mapstructure:"terminated"`
-	Name       string   `mapstructure:"name"`
-	Contacts   []string `mapstructure:"contact_list"`
-	City       string   `mapstructure:"city"`
-	Street     string   `mapstructure:"street"`
-	House      string   `mapstructure:"house"`
-	Entrance   string   `mapstructure:"entrance"`
-	Floor      string   `mapstructure:"floor"`
-	Room       string   `mapstructure:"room"`
-	Company    string   `mapstructure:"company"`
-	Office     string   `mapstructure:"office"`
-	SwitchIP   string   `mapstructure:"sw_ip"`
-	Port       string   `mapstructure:"port"`
-	Cable      string   `mapstructure:"cable_length"`
-	Comment    string   `mapstructure:"comment"`
-	Billing    struct {
-		Inet  InetAccount    `mapstructure:"internet"`
-		Tel   TelAccount     `mapstructure:"telephony"`
-		LDTel TelAccount     `mapstructure:"ld_telephony"`
-		TV    BillingAccount `mapstructure:"television"`
-	} `mapstructure:"billing_accounts"`
-	Tickets []Ticket `mapstructure:"tickets"`
-}
-
-// BillingAccount type
-type BillingAccount struct {
-	ID       int      `mapstructure:"account_id"`
-	Services []string `mapstructure:"services"`
-	Balance  float32  `mapstructure:"balance"`
-	Credit   float32  `mapstructure:"credit"`
-	Enabled  bool     `mapstructure:"enabled"`
-}
-
-// InetAccount type
-type InetAccount struct {
-	BillingAccount `mapstructure:",squash"`
-	Tariff         string   `mapstructure:"tariff"`
-	IPs            []string `mapstructure:"ip_list"`
-	Speed          string   `mapstructure:"speed"`
-}
-
-// TelAccount type
-type TelAccount struct {
-	BillingAccount `mapstructure:",squash"`
-	Numbers        []string `mapstructure:"number_list"`
-}
-
-// Ticket type
-type Ticket struct {
-	TicketID   int             `mapstructure:"ticket_id"`
-	ContractID string          `mapstructure:"contract_id"`
-	Creator    string          `mapstructure:"creator"`
-	Created    time.Time       `mapstructure:"date"`
-	Issue      string          `mapstructure:"issue"`
-	Master     string          `mapstructure:"master"`
-	Comments   []TicketComment `mapstructure:"comments"`
-	Name       string          `mapstructure:"name"`
-	Address    string          `mapstructure:"address"`
-	Contacts   []string        `mapstructure:"contacts"`
-	Modified   bool
-	Tag        string
-}
-
-// TicketComment type
-type TicketComment struct {
-	Time    time.Time `mapstructure:"time"`
-	Author  string    `mapstructure:"author"`
-	Comment string    `mapstructure:"comment"`
-}
-
-// ContractCacheItem struct
-type ContractCacheItem struct {
-	Contract Contract
-	Updated  time.Time
-	LastCall time.Time
-}
-
-// ContractsCache - contracts cache object
-var ContractsCache map[string]*ContractCacheItem
-
-// ContractsIPCache - for searching contract by ip
-var ContractsIPCache map[string]string
-
 // ColorReset - ANSI color
 const ColorReset string = "\033[0m"
 
@@ -363,32 +252,11 @@ const ColorWhite string = "\033[37m"
 
 // HELPUSER - help string for user
 const HELPUSER string = `
-<b>Raw parsing</b>
-By default bot try to parse raw input:
-
-<code>{CLIENT_IP|CONTRACT_ID}</code> - get client summary from gray database
-
 <code>SW_IP</code> - get switch summary
-
-<code>SW_IP PORT</code> - get short switch and short port summary with additional callback buttons:
-
-<code>full/short</code> - switch between full and short port summary
-<code>refresh</code> - update information in the same message
-<code>repeat</code> - send new message with updated information
-<code>clear</code> - clear port counters and refresh
-
-<b><i>IP</i></b> can be in short or full format (e.g. <code>59.75</code> and <code>192.168.59.75</code> are equal)
-For client's public ip you must specify address in full format.
-
-Otherwise, the input is interpreted as a search query. You can search switches by mac, model or location.
-Results will be paginated. Use callback buttons to navigate between pages: first, previous, next, last. 
-
-<b>Available commands:</b>
-<code>/help</code> - print this help
-<code>/config</code> - edit user settings
-<code>/tickets</code> - show tickets from gray database
-<code>/ping HOST</code> - ping host
-<code>/calc IP</code> - ip calculator (ip, mask, gateway, prefix)
+<code>SW_IP PORT</code> - get port info
+<code>SW_IP free</code> - get free ports
+<code>/ping IP</code> - ping
+<code>/calc IP</code> - ip calc
 
 `
 
@@ -402,25 +270,8 @@ const HELPADMIN string = `
 <code>reload</code> - reload configuration from file
 `
 
-// UserTags - icons for custom user tags in tickets
-const UserTags string = "⚒:🚨:👁‍🗨:📟:🔫:🪜:🧵:🛅:🌀:🔐:♾:🌚:🕑:✅"
-
-// TagNew - tag for new tickets
-const TagNew string = "🆕"
-
-// TagComment - tag for tickets with new comments
-const TagComment string = "🔅"
-
 // BotCommands const
 var BotCommands = []tgbotapi.BotCommand{
-	{
-		Command:     "tickets",
-		Description: "show gray database tickets",
-	},
-	{
-		Command:     "config",
-		Description: "edit user settings",
-	},
 	{
 		Command:     "help",
 		Description: "print help",
@@ -472,17 +323,6 @@ func fullIP(ip string, isSwitch bool) string {
 	return ""
 }
 
-// very simple check for public ip
-func isPIP(ip string) bool {
-	return !strings.HasPrefix(ip, "192.168.")
-}
-
-// check if string is contract id
-func isContract(s string) bool {
-	rgx, _ := regexp.Compile(`^[0-9]{5}$`)
-	return rgx.MatchString(s)
-}
-
 // print error in message
 func fmtErr(e string) string {
 	return "\n<b>ERROR</b>&#8252;\n<code>" + e + "</code>\n"
@@ -522,76 +362,6 @@ func fmtRTT(d time.Duration) string {
 	return d.Round(scale / 100).String()
 }
 
-// format phone number
-func fmtPhone(s string) string {
-	reNonDigit, _ := regexp.Compile(`\D`)
-	reLocal, _ := regexp.Compile(`^6\d{6}$`)
-	reMobile, _ := regexp.Compile(`^(?:[78]?)(\d{3})(\d{3})(\d{2})(\d{2})$`)
-	// remove non-digit symbols
-	res := reNonDigit.ReplaceAllString(s, "")
-	// convert local number
-	if reLocal.MatchString(res) {
-		res = "8496" + res
-	}
-	// format as 8 (xxx) xxx-xx-xx
-	m := reMobile.FindStringSubmatch(res)
-	if len(m) > 1 {
-		res = fmt.Sprintf("8(%s)%s-%s-%s", m[1], m[2], m[3], m[4])
-		return res
-	}
-	// return raw if no matches
-	return s
-}
-
-// format address for short template
-func fmtAddress(s string) string {
-	re, _ := regexp.Compile(`Коломна |ул\. |д\. |п\. \d+ |э\. \d+ |офис/цех\. | 0`)
-	return re.ReplaceAllString(s, "")
-}
-
-// generate yandex maps link
-func genMapURL(c Contract) string {
-	var res, city string
-	// city modification
-	switch c.City {
-	case "Сосновый бор":
-		city = "д. Негомож, городок Сосновый бор"
-	case "Луховицы":
-		city = "д. Щурово, городок Луховицы-3"
-	case "Ларцевы Поляны":
-		city = "г. Коломна, Ларцевы Поляны"
-	case "Радужный":
-		city = "п. Радужный"
-	case "":
-		city = "г. Коломна"
-	default:
-		city = "г. " + c.City
-	}
-	res = "https://yandex.ru/maps/?text=Московская область, " + city
-	if c.Street != "" {
-		res += ", улица " + c.Street
-	}
-	if c.House != "" {
-		res += ", дом " + c.House
-	}
-	if c.Entrance != "" {
-		res += ", подъезд " + c.Entrance
-	}
-	if c.Floor != "" {
-		res += ", этаж " + c.Floor
-	}
-	if c.Room != "" {
-		res += ", квартира " + c.Room
-	}
-	if c.Office != "" {
-		res += ", офис " + c.Office
-	}
-	if c.Company != "" {
-		res += ", " + c.Company
-	}
-	return res
-}
-
 // mapstructure decode with custom date format
 func mapstructureDecode(input interface{}, output interface{}) {
 	config := mapstructure.DecoderConfig{
@@ -627,37 +397,6 @@ func logError(msg string) {
 // print timestamp
 func printUpdated(t time.Time) string {
 	return fmt.Sprintf("\n<i>Updated:</i> <code>%s</code>", t.Format("2006-01-02 15:04:05"))
-}
-
-// split string time to hour and minute
-func splitTime(srcTime string) (int, int) {
-	t, _ := time.Parse("15:04", srcTime)
-	return t.Hour(), t.Minute()
-}
-
-// check if current time is in interval
-func nowIsBetween(from string, to string) bool {
-	t := time.Now()
-	h, m := t.Hour(), t.Minute()
-	h1, m1 := splitTime(from)
-	h2, m2 := splitTime(to)
-	if (h1 < h || h1 == h && m1 <= m) && (h < h2 || h == h2 && m < m2) {
-		return true
-	}
-	return false
-}
-
-// calculate optimal row length for many buttons
-func calcRowLength(x int) int {
-	// in telegram max row length is 8
-	inRow := 8
-	if x > inRow && x%inRow > 0 {
-		inRow = x / (x/inRow + 1)
-		if x%inRow > 0 {
-			inRow++
-		}
-	}
-	return inRow
 }
 
 // MAIN FUNCTIONS
@@ -702,33 +441,6 @@ func initBot() tgbotapi.UpdatesChannel {
 	for uid := range Users {
 		initUserData(uid)
 	}
-	// init contracts cache
-	ContractsCache = make(map[string]*ContractCacheItem)
-	ContractsIPCache = make(map[string]string)
-	// load user data from files
-	d, err := os.Open("data")
-	if err != nil && os.IsNotExist(err) {
-		logWarning("[init] Creating new data directory")
-		os.Mkdir("data", 0755)
-		d, _ = os.Open("data")
-	}
-	dFiles, err := d.Readdir(0)
-	if err != nil {
-		logError(fmt.Sprintf("[init] Read data files failed: %v", err))
-	}
-	d.Close()
-	for _, v := range dFiles {
-		logDebug(fmt.Sprintf("[init] Loading data file: %s", v.Name()))
-		filename := strings.TrimSuffix(v.Name(), ".gob")
-		if strings.HasPrefix(filename, "contract_") {
-			loadContractCache(strings.TrimPrefix(filename, "contract_"))
-		} else if filename == "ip_cache" {
-			loadData(filename, &ContractsIPCache)
-		} else {
-			uid, _ := strconv.ParseInt(filename, 10, 64)
-			loadUserData(uid)
-		}
-	}
 	// init cron
 	Cron = cron.New()
 	// clear switches pool daily
@@ -737,19 +449,6 @@ func initBot() tgbotapi.UpdatesChannel {
 		logError(fmt.Sprintf("[init] [cron] failed to add clear pool entry: %v", err))
 	} else {
 		logInfo(fmt.Sprintf("[init] [cron] added clear pool entry daily [%d]", id))
-	}
-	// rotate contracts cache
-	id, err = Cron.AddFunc(fmt.Sprintf("@every %s", CFG.CacheInterval), func() { rotateCache() })
-	if err != nil {
-		logError(fmt.Sprintf("[init] [cron] failed to add cache rotate entry: %v", err))
-	} else {
-		logInfo(fmt.Sprintf("[init] [cron] added cache rotate entry every %s [%d]", CFG.CacheInterval, id))
-	}
-	for uid := range Users {
-		// init cron only for authorized in gray database users
-		if Users[uid].Token != "" {
-			initUserCron(uid)
-		}
 	}
 	Cron.Start()
 	if CFG.UseWebhook {
@@ -767,23 +466,9 @@ func initBot() tgbotapi.UpdatesChannel {
 	return updates
 }
 
-// init user cron
-func initUserCron(uid int64) {
-	if Users[uid].RefreshEnabled {
-		updateCronJob(uid)
-		updateCronEntry(uid, "start")
-		updateCronEntry(uid, "stop")
-	} else {
-		for key := range Data[uid].Cron {
-			removeCronEntry(uid, key)
-		}
-	}
-}
-
 // init empty user data
 func initUserData(uid int64) {
 	Data[uid] = &UserData{}
-	Data[uid].Cron = map[string]cron.EntryID{"job": 0, "start": 0, "stop": 0}
 }
 
 // init configuration
@@ -823,10 +508,8 @@ func initConfig() error {
 			}
 			return "disabled"
 		},
-		"fmtPhone":   fmtPhone,
-		"fmtAddress": fmtAddress,
-		"inc":        func(x int) int { return x + 1 },
-		"add":        func(x, y int) int { return x + y },
+		"inc": func(x int) int { return x + 1 },
+		"add": func(x, y int) int { return x + y },
 	}
 	// load templates
 	TPL, err = template.New("templates").Funcs(funcMap).ParseGlob("templates/*")
@@ -856,11 +539,6 @@ func initUserConfig(uid int64, name string) error {
 		name = fmt.Sprintf("user-%d", uid)
 	}
 	u := UserConfig{Name: name}
-	logWarning(fmt.Sprintf("[config] Using default config for %d", uid))
-	err := readYML(&u, "config/default.yml")
-	if err != nil {
-		return err
-	}
 	Users[uid] = &u
 	return saveUserConfig(uid)
 }
@@ -914,69 +592,6 @@ func writeYML(cfg interface{}, filename string) error {
 	}
 	logInfo(fmt.Sprintf("[config] Saved %s", filename))
 	return nil
-}
-
-// save data to file
-func saveData(filename string, data interface{}) error {
-	f, err := os.Create(fmt.Sprintf("data/%s.gob", filename))
-	defer f.Close()
-	if err != nil {
-		logError(fmt.Sprintf("[save] Failed to open file [%s]: %v", filename, err))
-		return err
-	}
-	encoder := gob.NewEncoder(f)
-	err = encoder.Encode(data)
-	if err != nil {
-		logError(fmt.Sprintf("[save] Failed to encode data [%s]: %v", filename, err))
-		return err
-	}
-	return nil
-}
-
-// load data from file
-func loadData(filename string, data interface{}) error {
-	f, err := os.Open(fmt.Sprintf("data/%s.gob", filename))
-	defer f.Close()
-	if err != nil {
-		logError(fmt.Sprintf("[load] Failed to open file [%s]: %v", filename, err))
-		return err
-	}
-	decoder := gob.NewDecoder(f)
-	err = decoder.Decode(data)
-	if err != nil {
-		logError(fmt.Sprintf("[load] Failed to decode data [%s]: %v", filename, err))
-		return err
-	}
-	return nil
-}
-
-// save user data to file (only tickets)
-func saveUserData(uid int64) error {
-	filename := strconv.FormatInt(uid, 10)
-	return saveData(filename, Data[uid].Tickets)
-}
-
-// load user data from file (only tickets)
-func loadUserData(uid int64) error {
-	filename := strconv.FormatInt(uid, 10)
-	return loadData(filename, &Data[uid].Tickets)
-}
-
-// save contract cache to file
-func saveContractCache(contractID string) error {
-	filename := "contract_" + contractID
-	return saveData(filename, ContractsCache[contractID])
-}
-
-// load contract cache from file
-func loadContractCache(contractID string) error {
-	var d ContractCacheItem
-	filename := "contract_" + contractID
-	err := loadData(filename, &d)
-	if err == nil {
-		ContractsCache[contractID] = &d
-	}
-	return err
 }
 
 // add/delete user
@@ -1446,34 +1061,6 @@ func portSummary(ip string, port string, style string) (string, error) {
 	} // end full style
 
 	logDebug(fmt.Sprintf("[portSummary] pInfo: %+v", pInfo))
-	// search for related contracts
-	var rList []string
-	var relatedContracts string
-	for _, a := range pInfo.ACL.Entries {
-		if a.Mode == "permit" {
-			cID, err := ip2contract(a.IP)
-			if err == nil {
-				rList = append(rList, cID)
-			}
-		}
-	}
-	for _, a := range pInfo.ARP.Entries {
-		cID, err := ip2contract(a.IP)
-		if err == nil {
-			rList = append(rList, cID)
-		}
-	}
-	// remove duplicates
-	for _, s := range rList {
-		if !strings.Contains(relatedContracts, s) {
-			relatedContracts += " /" + s
-			// check contract cache and update if needed, will be cleared as usual
-			go getContract(s)
-		}
-	}
-	if relatedContracts != "" {
-		res += "Related contracts:" + relatedContracts + "\n"
-	}
 
 	res += fmtObj(pInfo, "port.tmpl")
 	res += printUpdated(time.Now())
@@ -1575,11 +1162,8 @@ func rawHandler(raw string) (string, tgbotapi.InlineKeyboardMarkup) {
 			res, kb = swHandler(ip, port, args)
 			// ip is client ip
 		} else {
-			res, kb = clientHandler(ip, args)
+			res = fmt.Sprintf("%s is not a switch ip", ip)
 		}
-	// cmd is contract id
-	case isContract(cmd):
-		res, kb = clientHandler(cmd, args)
 	default:
 		// search in db by default
 		res, kb = searchHandler(raw, 1)
@@ -1670,214 +1254,6 @@ func calcHandler(arg string) string {
 		res = ipCalc(ip)
 	}
 	return res
-}
-
-// get contract id by ip
-func ip2contract(ip string) (string, error) {
-	// check in cache first
-	if contractID, inCache := ContractsIPCache[ip]; inCache {
-		logDebug(fmt.Sprintf("[ip2contract] [%s] found in cache", ip))
-		return contractID, nil
-	}
-	// get from api
-	resp, err := apiGet(fmt.Sprintf("/gdb/checkip/%s", ip))
-	if err != nil {
-		return "", err
-	}
-	// update cache
-	contractID := resp["detail"].(string)
-	ContractsIPCache[ip] = contractID
-	return contractID, nil
-
-}
-
-// get contract object
-func getContract(contractID string) (ContractCacheItem, error) {
-	var res ContractCacheItem
-	if item, inCache := ContractsCache[contractID]; inCache {
-		// update LastCall and return contract from cache
-		logDebug(fmt.Sprintf("[getContract] [%s] found in cache", contractID))
-		ContractsCache[contractID].LastCall = time.Now()
-		res = *item
-	} else {
-		// get contract from api
-		item, err := updateCacheContract(contractID)
-		res = item
-		if err != nil {
-			return res, err
-		}
-	}
-	return res, nil
-}
-
-// update contract item cache
-func updateCacheContract(contractID string) (ContractCacheItem, error) {
-	var res ContractCacheItem
-	resp, err := apiGet(fmt.Sprintf("/gdb/%s", contractID))
-	if err != nil {
-		return res, err
-	}
-	// create item if not exists
-	if _, itemExist := ContractsCache[contractID]; !itemExist {
-		logInfo(fmt.Sprintf("[cache] created new item [%s]", contractID))
-		ContractsCache[contractID] = new(ContractCacheItem)
-		ContractsCache[contractID].LastCall = time.Now()
-	}
-	// update data
-	mapstructureDecode(resp["data"], &ContractsCache[contractID].Contract)
-	ContractsCache[contractID].Updated = time.Now()
-	res = *ContractsCache[contractID]
-	// update ip cache
-	for _, ip := range res.Contract.Billing.Inet.IPs {
-		ContractsIPCache[ip] = res.Contract.ContractID
-	}
-	// update cache files
-	saveContractCache(contractID)
-	saveData("ip_cache", &ContractsIPCache)
-	logDebug(fmt.Sprintf("[cache] updated [%s]", contractID))
-	return res, nil
-}
-
-// update and rotate contracts cache
-func rotateCache() {
-	lifetime, _ := time.ParseDuration(CFG.CacheLifetime)
-	for contractID, item := range ContractsCache {
-		if time.Since(item.LastCall) < lifetime {
-			updateCacheContract(contractID)
-		} else {
-			// clear cache
-			delete(ContractsCache, contractID)
-			os.Remove(fmt.Sprintf("data/contract_%s.gob", contractID))
-			for _, ip := range item.Contract.Billing.Inet.IPs {
-				delete(ContractsIPCache, ip)
-			}
-			saveData("ip_cache", &ContractsIPCache)
-			logInfo(fmt.Sprintf("[cache] cleared item [%s]", contractID))
-		}
-	}
-}
-
-// client ip / contract id handler
-func clientHandler(client string, args string) (string, tgbotapi.InlineKeyboardMarkup) {
-	var res string                       // text message result
-	var kb tgbotapi.InlineKeyboardMarkup // inline keyboard markup
-	var btns []string                    // switch view buttons text
-	var cData Contract                   // client data struct
-	var template string
-	logDebug(fmt.Sprintf("[clientHandler] client: %s, args: %s", client, args))
-	view, args := splitArgs(args)
-	// set view template and buttons
-	switch view {
-	case "billing":
-		template = "contract.billing.tmpl"
-		btns = []string{"contacts", "tickets"}
-	case "tickets":
-		template = "contract.tickets.tmpl"
-		btns = []string{"contacts", "billing"}
-	default:
-		if view == "refresh" {
-			args = "refresh"
-		}
-		view = "contacts"
-		template = "contract.short.tmpl"
-		btns = []string{"tickets", "billing"}
-	}
-	// client is contract id or ip address
-	if !isContract(client) {
-		contractID, err := ip2contract(client)
-		if err != nil {
-			return fmtErr(err.Error()), kb
-		}
-		client = contractID
-	}
-	// update cache if needed
-	if strings.Contains(args, "refresh") {
-		updateCacheContract(client)
-	}
-	c, err := getContract(client)
-	if err != nil {
-		return fmtErr(err.Error()), kb
-	}
-	cData = c.Contract
-	res = fmtObj(cData, template)
-	res += printUpdated(c.Updated)
-	gdbURL := strings.TrimRight(CFG.GraydbURL, "/") + fmt.Sprintf("/index.php?id_aabon=%d", cData.ClientID)
-	gdbArchiveURL := strings.TrimRight(CFG.GraydbURL, "/") + fmt.Sprintf("/arx_zay.php?dogovor=%s", cData.ContractID)
-	gdbPaymentURL := strings.TrimRight(CFG.GraydbURL, "/") + fmt.Sprintf("/bil_pay.php?nome_dogo=%s", cData.ContractID)
-	// init keyboard with empty row
-	kb = tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow())
-	// add view buttons to row
-	for _, btn := range btns {
-		// skip tickets button if no tickets
-		if btn == "tickets" && len(cData.Tickets) == 0 {
-			continue
-		}
-		kb.InlineKeyboard[0] = append(
-			kb.InlineKeyboard[0],
-			tgbotapi.NewInlineKeyboardButtonData(btn, fmt.Sprintf("raw edit %s %s", client, btn)),
-		)
-	}
-	// buttons per view
-	if view == "contacts" {
-		kb.InlineKeyboard = append(kb.InlineKeyboard,
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonURL("map", genMapURL(cData)),
-				tgbotapi.NewInlineKeyboardButtonURL("archive", gdbArchiveURL),
-			),
-		)
-	} else if view == "billing" {
-		for _, ip := range cData.Billing.Inet.IPs {
-			cRow := tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(
-					fmt.Sprintf("ping %s", ip),
-					fmt.Sprintf("ping send %s", ip),
-				),
-			)
-			if isPIP(ip) {
-				cRow = append(cRow,
-					tgbotapi.NewInlineKeyboardButtonData(
-						fmt.Sprintf("ip calc %s", ip),
-						fmt.Sprintf("calc send %s", ip),
-					),
-				)
-			}
-			kb.InlineKeyboard = append(kb.InlineKeyboard, cRow)
-		}
-		kb.InlineKeyboard = append(kb.InlineKeyboard,
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonURL("payments", gdbPaymentURL),
-			),
-		)
-	} else if view == "tickets" {
-		for i, ticket := range cData.Tickets {
-			kb.InlineKeyboard = append(kb.InlineKeyboard,
-				tgbotapi.NewInlineKeyboardRow(
-					tgbotapi.NewInlineKeyboardButtonData(
-						fmt.Sprintf(" add comment [%d] (%s)", i+1, ticket.Master),
-						fmt.Sprintf("comment edit %s %d", cData.ContractID, ticket.TicketID),
-					),
-				),
-			)
-		}
-	}
-	// common buttons for all views
-	kb.InlineKeyboard = append(kb.InlineKeyboard,
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("refresh", fmt.Sprintf("raw edit %s %s refresh", client, view)),
-			tgbotapi.NewInlineKeyboardButtonURL("graydb", gdbURL),
-			tgbotapi.NewInlineKeyboardButtonData("close", "close"),
-		),
-	)
-	// check client switch ip and port and add port button
-	ip := fullIP(cData.SwitchIP, true)
-	port, err := strconv.Atoi(cData.Port)
-	if ip != "" && err == nil {
-		kb.InlineKeyboard[0] = append(
-			kb.InlineKeyboard[0],
-			tgbotapi.NewInlineKeyboardButtonData(
-				"port info", fmt.Sprintf("raw send %s %d", ip, port)))
-	}
-	return res, kb
 }
 
 // search mode handler
@@ -1991,499 +1367,6 @@ func pingHandler(msg string, uid int64) string {
 	return res
 }
 
-// config mode handler
-func configHandler(msg string, uid int64, msgID int) (string, tgbotapi.InlineKeyboardMarkup) {
-	// msgID is for deferred message deletion
-	var res string
-	var kb tgbotapi.InlineKeyboardMarkup
-
-	// subcommands processing, msg - subcommand
-	if Data[uid].TMP == "" {
-		switch msg {
-		case "login", "interval", "from", "to":
-			res = fmt.Sprintf("Enter new '%s' value:", msg)
-			// change mode for user input and save tmp data
-			Data[uid].Mode = "config"
-			Data[uid].TMP = fmt.Sprintf("%d %s", msgID, msg)
-		case "toggleRefresh":
-			Users[uid].RefreshEnabled = !Users[uid].RefreshEnabled
-			initUserCron(uid)
-		case "toggleNew":
-			Users[uid].NotifyNew = !Users[uid].NotifyNew
-		case "toggleUpdate":
-			Users[uid].NotifyUpdate = !Users[uid].NotifyUpdate
-		}
-
-	} else { // input mode, msg - data entered by user
-		// unpack saved data
-		strID, savedData := splitArgs(Data[uid].TMP)
-		enteredKey, savedData := splitArgs(savedData)
-		oldMsgID, _ := strconv.Atoi(strID)
-		enteredValue := msg
-		// delete previous bot message
-		Bot.Request(tgbotapi.NewDeleteMessage(uid, oldMsgID))
-		switch enteredKey {
-		case "login":
-			// save entered login to tmp and ask for password
-			res = "Enter password:"
-			Data[uid].TMP = fmt.Sprintf("%d password %s", msgID, enteredValue)
-		case "password":
-			// try to get gray database token from api
-			resp, err := requestAPI("POST", "/gdb/user/get_token",
-				map[string]interface{}{"login": savedData, "password": enteredValue})
-			if err != nil {
-				res = fmtErr(err.Error())
-				kb = genKeyboard([][]map[string]string{{{"try again": "config edit login"}, {"close": "close"}}})
-			} else {
-				mapstructure.Decode(resp["data"].(map[string]interface{})["token"], &Users[uid].Token)
-				// get username from api
-				resp, err := requestAPI("GET", "/gdb/user", map[string]interface{}{"token": Users[uid].Token})
-				if err != nil {
-					Users[uid].Username = err.Error()
-				} else {
-					mapstructure.Decode(resp["data"].(map[string]interface{})["username"], &Users[uid].Username)
-				}
-			}
-			Data[uid].TMP = ""
-		case "interval":
-			if dt, err := time.ParseDuration(enteredValue); err != nil {
-				sendAlert(uid, "Invalid duration format")
-			} else if dt < time.Minute {
-				sendAlert(uid, "Duration is less than 1m")
-			} else {
-				Users[uid].RefreshInterval = enteredValue
-				updateCronJob(uid)
-			}
-			Data[uid].TMP = ""
-		case "from", "to":
-			if _, err := time.Parse("15:04", enteredValue); err != nil {
-				sendAlert(uid, "Invalid time format, use <code>HH:MM</code>")
-			} else {
-				if enteredKey == "from" {
-					Users[uid].RefreshStart = enteredValue
-					updateCronEntry(uid, "start")
-				} else {
-					Users[uid].RefreshStop = enteredValue
-					updateCronEntry(uid, "stop")
-				}
-				// update job because working time could be changed
-				updateCronJob(uid)
-			}
-			Data[uid].TMP = ""
-		}
-	}
-
-	// restore mode on cleared tmp
-	if Data[uid].TMP == "" {
-		Data[uid].Mode = "raw"
-		// save message on changes
-		if msg != "" {
-			saveUserConfig(uid)
-		}
-	}
-	// print config on empty res
-	if res == "" {
-		res, kb = printConfig(uid)
-	}
-
-	return res, kb
-}
-
-// print unauthorized message
-func printLogin() (string, tgbotapi.InlineKeyboardMarkup) {
-	res := "You are not authorized in gray database."
-	kb := genKeyboard([][]map[string]string{{{"login": "config edit login"}}})
-	return res, kb
-}
-
-// print user config
-func printConfig(uid int64) (string, tgbotapi.InlineKeyboardMarkup) {
-	var res string
-	var kb tgbotapi.InlineKeyboardMarkup
-	if Users[uid].Token == "" {
-		return printLogin()
-	}
-	res = fmtObj(Users[uid], "config.tmpl")
-	buttons := [][]map[string]string{{{"edit credentials": "config edit login"}}}
-	if Users[uid].RefreshEnabled {
-		buttons = append(buttons,
-			[]map[string]string{
-				{"disable refresh": "config edit toggleRefresh"},
-				{"edit interval": "config edit interval"},
-			},
-			[]map[string]string{
-				{"edit from": "config edit from"},
-				{"edit to": "config edit to"},
-			}, []map[string]string{
-				{"toggle New": "config edit toggleNew"},
-				{"toggle Update": "config edit toggleUpdate"},
-			},
-		)
-	} else {
-		buttons = append(buttons, []map[string]string{{"enable refresh": "config edit toggleRefresh"}})
-	}
-	buttons = append(buttons, []map[string]string{{"close": "close"}})
-	kb = genKeyboard(buttons)
-	return res, kb
-}
-
-// update cron entry
-func updateCronEntry(uid int64, key string) {
-	var s string
-	var f func()
-	// remove old entry
-	removeCronEntry(uid, key)
-	switch key {
-	case "job":
-		// set random interval +/- 15s from original
-		t, _ := time.ParseDuration(Users[uid].RefreshInterval)
-		t += time.Duration(rand.Intn(30)-15) * time.Second
-		s = fmt.Sprintf("@every %s", t)
-		f = func() { updateTickets(uid) }
-	case "start":
-		h, m := splitTime(Users[uid].RefreshStart)
-		s = fmt.Sprintf("%d %d * * *", m, h)
-		f = func() { updateCronJob(uid) }
-	case "stop":
-		h, m := splitTime(Users[uid].RefreshStop)
-		s = fmt.Sprintf("%d %d * * *", m, h)
-		f = func() { removeCronEntry(uid, "job") }
-	}
-	id, err := Cron.AddFunc(s, f)
-	if err != nil {
-		logError(fmt.Sprintf("[cron] [%s] failed to add %s entry: %v", Users[uid].Name, key, err))
-	} else {
-		Data[uid].Cron[key] = id
-		logInfo(fmt.Sprintf("[cron] [%s] added %s entry %s [%d]", Users[uid].Name, key, s, id))
-	}
-}
-
-// remove cron entry
-func removeCronEntry(uid int64, key string) {
-	id := Data[uid].Cron[key]
-	if Cron.Entry(id).Valid() {
-		Cron.Remove(id)
-		logInfo(fmt.Sprintf("[cron] [%s] removed %s entry [%d]", Users[uid].Name, key, id))
-	}
-}
-
-// update user job
-func updateCronJob(uid int64) {
-	if nowIsBetween(Users[uid].RefreshStart, Users[uid].RefreshStop) {
-		updateCronEntry(uid, "job")
-		// run job immediately after adding
-		go Cron.Entry(Data[uid].Cron["job"]).Job.Run()
-	} else {
-		logWarning(fmt.Sprintf("[cron] [%s] job skipped due to working time range", Users[uid].Name))
-		// remove old job
-		removeCronEntry(uid, "job")
-	}
-}
-
-// update user tickets cache
-func updateTickets(uid int64) error {
-	resp, err := requestAPI("GET", "/gdb/user/tickets", map[string]interface{}{"token": Users[uid].Token})
-	if err != nil {
-		return err
-	}
-	// save old tickets to compare with updated
-	oldTickets := make(map[int][]TicketComment)
-	// save old tags to restore after update
-	oldTags := make(map[int]string)
-	for _, e := range Data[uid].Tickets.Data {
-		oldTickets[e.TicketID] = e.Comments
-		oldTags[e.TicketID] = e.Tag
-	}
-	// clear tickets cache before update
-	Data[uid].Tickets.Data = nil
-	mapstructureDecode(resp, &Data[uid].Tickets)
-	// scan changes
-	for i, e := range Data[uid].Tickets.Data {
-		isModified := false
-		if _, ok := oldTickets[e.TicketID]; !ok {
-			// new ticket notification
-			isModified = true
-			logInfo(fmt.Sprintf("[tickets] [%s] New ticket: %s/%d", Users[uid].Name, e.ContractID, e.TicketID))
-			// new ticket - check that contract cache exists
-			getContract(e.ContractID)
-			// set new tag for ticket
-			Data[uid].Tickets.Data[i].Tag = TagNew
-			if Users[uid].NotifyNew {
-				res := TagNew + fmtObj(e, "ticket.user.tmpl")
-				kb := genTicketKeyboard(e)
-				kb.InlineKeyboard = append(kb.InlineKeyboard,
-					tgbotapi.NewInlineKeyboardRow(
-						tgbotapi.NewInlineKeyboardButtonData("all tickets", "tickets edit list"),
-						tgbotapi.NewInlineKeyboardButtonData("close", "close"),
-					),
-				)
-				sendMessage(uid, res, kb)
-			}
-		} else {
-			// for old tickets copy saved user data to updated ticket
-			Data[uid].Tickets.Data[i].Tag = oldTags[e.TicketID]
-		}
-		c := len(e.Comments)
-		if c > 0 {
-			// check comments
-			lastComment := e.Comments[c-1]
-			if lastComment.Author != Data[uid].Tickets.Meta.User {
-				if c > len(oldTickets[e.TicketID]) && !isModified {
-					// new comment notification (only for old tickets)
-					logInfo(fmt.Sprintf("[tickets] [%s] %s commented %s/%d",
-						Users[uid].Name, lastComment.Author, e.ContractID, e.TicketID))
-					// set comment tag for ticket
-					Data[uid].Tickets.Data[i].Tag = TagComment
-					if Users[uid].NotifyUpdate {
-						res := fmt.Sprintf("New comment /%s %s\n%s: %s",
-							e.ContractID, fmtAddress(e.Address), lastComment.Author, lastComment.Comment)
-						kb := genKeyboard([][]map[string]string{
-							{
-								{"comment": fmt.Sprintf("comment edit %s %d", e.ContractID, e.TicketID)},
-								{"tag": fmt.Sprintf("tag edit %d", e.TicketID)},
-							}, {
-								{"all tickets": "tickets edit list"},
-								{"close": "close"},
-							},
-						})
-						sendMessage(uid, res, kb)
-					}
-				}
-				isModified = true
-			}
-		}
-		Data[uid].Tickets.Data[i].Modified = isModified
-	}
-	Data[uid].Tickets.Updated = time.Now()
-	// save data to file
-	saveUserData(uid)
-	return nil
-}
-
-// generate ticket detetail keybord with 2 rows
-func genTicketKeyboard(ticket Ticket) tgbotapi.InlineKeyboardMarkup {
-	kb := tgbotapi.NewInlineKeyboardMarkup()
-	// contract related buttons
-	c, err := getContract(ticket.ContractID)
-	if err == nil {
-		cRow := tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonURL("map", genMapURL(c.Contract)))
-		if c.Contract.SwitchIP != "" && c.Contract.Port != "" {
-			cRow = append(cRow,
-				tgbotapi.NewInlineKeyboardButtonData(
-					"port info",
-					fmt.Sprintf("raw send %s %s", c.Contract.SwitchIP, c.Contract.Port),
-				),
-			)
-		}
-		kb.InlineKeyboard = append(kb.InlineKeyboard, cRow)
-	}
-	// other buttons rows
-	kb.InlineKeyboard = append(kb.InlineKeyboard,
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(
-				"client",
-				fmt.Sprintf("raw send %s", ticket.ContractID),
-			),
-			tgbotapi.NewInlineKeyboardButtonData("comment",
-				fmt.Sprintf("comment edit %s %d", ticket.ContractID, ticket.TicketID),
-			),
-			tgbotapi.NewInlineKeyboardButtonData("tag",
-				fmt.Sprintf("tag edit %d", ticket.TicketID),
-			),
-		),
-	)
-	return kb
-}
-
-// get list of gray database tickets
-func ticketsHandler(cmd string, uid int64) (string, tgbotapi.InlineKeyboardMarkup) {
-	var res string
-	var kb tgbotapi.InlineKeyboardMarkup
-	var page int
-	var buttons [][]map[string]string
-	if Users[uid].Token == "" {
-		return printLogin()
-	}
-	// update tickets cache on refresh and first run
-	if strings.Contains(cmd, "refresh") || Data[uid].Tickets.Updated.IsZero() {
-		// trim cmd to prevent duplication in refresh button
-		re, _ := regexp.Compile(`refresh ?`)
-		cmd = re.ReplaceAllString(cmd, "")
-		if err := updateTickets(uid); err != nil {
-			return fmtErr(err.Error()), kb
-		}
-	}
-	tickets := Data[uid].Tickets.Data
-	total := len(tickets)
-	if total == 0 {
-		res = "You have no tickets"
-	} else {
-		if strings.Contains(cmd, "details") {
-			_, p := splitLast(cmd)
-			page, _ = strconv.Atoi(p)
-			// replace invalid page numbers by first or last page
-			if page < 1 {
-				page = 1
-			}
-			if page > total {
-				page = total
-			}
-			// get current ticket
-			ticket := tickets[page-1]
-			res = fmtObj(ticket, "ticket.user.tmpl")
-			res += fmt.Sprintf("\nTicket: <b>%d/%d</b>", page, total)
-			// pagination row
-			if total > 1 {
-				buttons = rowPagination("tickets edit details", page, total)
-			}
-			// insert first 'all' button
-			buttons[0] = append([]map[string]string{{"all": "tickets edit list"}}, buttons[0]...)
-			k1 := genKeyboard(buttons)
-			k2 := genTicketKeyboard(ticket)
-			// append first row for navigation and two rows for ticket details
-			kb = tgbotapi.NewInlineKeyboardMarkup()
-			kb.InlineKeyboard = append(k1.InlineKeyboard, k2.InlineKeyboard...)
-		} else {
-			res = fmtObj(tickets, "ticket.list.tmpl")
-			// generate index buttons
-			var row []map[string]string
-			inRow := calcRowLength(total)
-			for i := 1; i <= total; i++ {
-				row = append(row, map[string]string{strconv.Itoa(i): fmt.Sprintf("tickets edit details %d", i)})
-				// next row on hit inRow count
-				if len(row) == inRow {
-					buttons = append(buttons, row)
-					row = nil
-				}
-			}
-			// add last row (< inRow buttons)
-			if len(row) > 0 {
-				buttons = append(buttons, row)
-			}
-			kb = genKeyboard(buttons)
-		}
-	}
-	// common row with refresh and close buttons
-	kb.InlineKeyboard = append(kb.InlineKeyboard,
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("refresh", fmt.Sprintf("tickets edit refresh %s", cmd)),
-			tgbotapi.NewInlineKeyboardButtonData("close", "close"),
-		),
-	)
-	res += printUpdated(Data[uid].Tickets.Updated)
-	return res, kb
-}
-
-// add comment to ticket
-func addComment(uid int64, contract string, ticket string, comment string) {
-	_, err := requestAPI("POST",
-		fmt.Sprintf("/gdb/%s/tickets/%s", contract, ticket),
-		map[string]interface{}{
-			"token":   Users[uid].Token,
-			"comment": comment,
-		})
-	if err != nil {
-		sendAlert(uid, fmtErr(err.Error()))
-	} else {
-		go updateTickets(uid)
-	}
-}
-
-// add comment handler
-func commentHandler(args string, uid int64, msgID int) (string, tgbotapi.InlineKeyboardMarkup) {
-	var res string
-	var kb tgbotapi.InlineKeyboardMarkup
-	// args format for init message: 'clientID ticketID'
-	reInit, _ := regexp.Compile(`^[0-9]{5} \d+$`)
-	if reInit.MatchString(args) {
-		// send prompt with cancel button ans save its id
-		k := tgbotapi.NewReplyKeyboard(tgbotapi.NewKeyboardButtonRow(tgbotapi.NewKeyboardButton("cancel")))
-		m, _ := sendMessage(uid, "Enter new comment:", k)
-		// store temporary data and change mode
-		Data[uid].TMP = fmt.Sprintf("%d %d %s", msgID, m.MessageID, args)
-		Data[uid].Mode = "comment"
-	} else if Data[uid].TMP != "" {
-		// unpack temporary data [initMsgID, promtMsgID, clientID, ticketID]
-		tmpData := strings.Split(Data[uid].TMP, " ")
-		// delete previous two messages (init and prompt)
-		for i := 0; i <= 1; i++ {
-			m, _ := strconv.Atoi(tmpData[i])
-			Bot.Request(tgbotapi.NewDeleteMessage(uid, m))
-		}
-		if args != "cancel" {
-			// add new comment
-			go addComment(uid, tmpData[2], tmpData[3], args)
-		}
-		// clear tmp, restore mode, remove cancel button, return to tickets list
-		Data[uid].TMP = ""
-		Data[uid].Mode = "raw"
-		clearReplyKeyboard(uid)
-		res, kb = ticketsHandler("list", uid)
-	} else {
-		res, kb = fmtErr("Wrong comment params"), closeButton()
-		logError(fmt.Sprintf("[comment] Wrong params: %s", args))
-	}
-	return res, kb
-}
-
-// ticket tag handler
-func tagHandler(args string, uid int64) (string, tgbotapi.InlineKeyboardMarkup) {
-	var res string
-	var kb tgbotapi.InlineKeyboardMarkup
-	var found bool
-	ticket, tag := splitArgs(args)
-	ticketID, _ := strconv.Atoi(ticket)
-	if tag == "" {
-		// no params - return keyboard with tags
-		kb = genKeyboard(genTagsButtons(ticketID))
-	} else {
-		if tag == "clear" {
-			tag = ""
-		}
-		// try to find ticket id in user tickets
-		for i, e := range Data[uid].Tickets.Data {
-			if e.TicketID == ticketID {
-				Data[uid].Tickets.Data[i].Tag = tag
-				saveUserData(uid)
-				res = "Add comment?"
-				kb = genKeyboard([][]map[string]string{{
-					{"yes": fmt.Sprintf("comment edit %s %d", e.ContractID, e.TicketID)},
-					{"no": "tickets edit list"},
-				}})
-				found = true
-				break
-			}
-		}
-		if !found {
-			logError(fmt.Sprintf("[tag] ticket not found: %d", ticketID))
-		}
-	}
-	return res, kb
-}
-
-// generate tags buttons
-func genTagsButtons(ticketID int) [][]map[string]string {
-	var buttons [][]map[string]string
-	var row []map[string]string
-	// first button - 'clear'
-	row = append(row, map[string]string{" ": fmt.Sprintf("tag edit %d clear", ticketID)})
-	tags := strings.Split(UserTags, ":")
-	// increase count of tags because of first 'empty' tag (clear)
-	inRow := calcRowLength(len(tags) + 1)
-	for _, tag := range tags {
-		row = append(row, map[string]string{tag: fmt.Sprintf("tag edit %d %s", ticketID, tag)})
-		if len(row) == inRow {
-			buttons = append(buttons, row)
-			row = nil
-		}
-	}
-	// add last row (< inRow buttons)
-	if len(row) > 0 {
-		buttons = append(buttons, row)
-	}
-	return buttons
-}
-
 // MAIN APP
 func main() {
 	initConfig()
@@ -2535,12 +1418,6 @@ func main() {
 				goto SEND
 			}
 
-			// workaround for contracts in cmd
-			if isContract(cmd) {
-				msg = cmd
-				cmd = "raw"
-			}
-
 			if cmd != "" {
 				// reset mode for each new command
 				Data[uid].Mode = ""
@@ -2562,11 +1439,8 @@ func main() {
 					res, kb = "You have no permissions to work in this mode", closeButton()
 					goto SEND
 				}
-			case "raw", "comment", "config":
+			case "raw":
 				Data[uid].Mode = cmd
-			case "tickets":
-				res, kb = ticketsHandler(msg, uid)
-				goto SEND
 			case "calc":
 				if msg != "" {
 					res, kb = calcHandler(msg), closeButton()
@@ -2591,11 +1465,6 @@ func main() {
 				res = adminHandler(msg)
 			case "ping":
 				res = pingHandler(msg, uid)
-			case "config":
-				// increased msgID - future answer from bot
-				res, kb = configHandler(msg, uid, u.Message.MessageID+1)
-			case "comment":
-				res, kb = commentHandler(msg, uid, 0)
 			default: // default is raw mode
 				res, kb = rawHandler(msg)
 			}
@@ -2647,22 +1516,6 @@ func main() {
 				kw, p := splitLast(rawCmd)
 				page, _ := strconv.Atoi(p)
 				res, kb = searchHandler(kw, page)
-			case "config":
-				res, kb = configHandler(rawCmd, uid, msg.MessageID)
-			case "tickets":
-				res, kb = ticketsHandler(rawCmd, uid)
-			case "comment":
-				res, kb = commentHandler(rawCmd, uid, msg.MessageID)
-			case "tag":
-				res, kb = tagHandler(rawCmd, uid)
-			// ping and calc are called from client billing view
-			case "calc":
-				res, kb = calcHandler(rawCmd), closeButton()
-			case "ping":
-				res = pingHandler(rawCmd, uid)
-				Data[uid].Mode = mode
-				Bot.Request(tgbotapi.NewDeleteMessage(uid, msg.MessageID))
-				goto CALLBACK
 			case "close":
 				// delete message on close button
 				msgDate := time.Unix(int64(msg.Date), 0)
