@@ -109,6 +109,7 @@ type PortSummary struct {
 		Entries []ARPEntry
 		Error   string
 	}
+	LinkDownCount int
 }
 
 // Port type
@@ -914,6 +915,12 @@ func portSummary(ip string, port string, style string) (string, error) {
 			pInfo.LinkUp = true
 			break
 		}
+	}
+
+	// get linkdown count
+	resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/linkdowncount", ip, port))
+	if err == nil {
+		mapstructure.Decode(resp["data"], &pInfo.LinkDownCount)
 	}
 
 	// get port counters
