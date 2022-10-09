@@ -161,6 +161,9 @@
 {{ end }}
 
 {{- template "port" .Slots }}
+{{- if .LinkDownCount }}
+<i>LinkDown: </i><code>{{ .LinkDownCount }}</code> times in last 24h
+{{ end }}
 {{- template "mac" .MAC }}
 {{- template "counters" .Counters }}
 {{- if eq .Style "full" }}
