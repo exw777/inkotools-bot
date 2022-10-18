@@ -338,6 +338,13 @@ var ContractsCache map[string]*ContractCacheItem
 // ContractsIPCache - for searching contract by ip
 var ContractsIPCache map[string]string
 
+// LogEvent type
+type LogEvent struct {
+	Time     time.Time `mapstructure:"timestamp"`
+	LogLevel string    `mapstructure:"log_level"`
+	Message  string    `mapstructure:"message"`
+}
+
 // ColorReset - ANSI color
 const ColorReset string = "\033[0m"
 
@@ -593,6 +600,12 @@ func genMapURL(c Contract) string {
 	return res
 }
 
+// convert UTC to MSK
+func utc2msk(t time.Time) time.Time {
+	loc, _ := time.LoadLocation("Europe/Moscow")
+	return t.In(loc)
+}
+
 // mapstructure decode with custom date format
 func mapstructureDecode(input interface{}, output interface{}) {
 	config := mapstructure.DecoderConfig{
@@ -828,6 +841,7 @@ func initConfig() error {
 		"fmtAddress": fmtAddress,
 		"inc":        func(x int) int { return x + 1 },
 		"add":        func(x, y int) int { return x + y },
+		"utc2msk":    utc2msk,
 	}
 	// load templates
 	TPL, err = template.New("templates").Funcs(funcMap).ParseGlob("templates/*")
@@ -1084,7 +1098,7 @@ func closeButton() tgbotapi.InlineKeyboardMarkup {
 	return genKeyboard([][]map[string]string{{{"close": "close"}}})
 }
 
-// generate pagination keyboard row
+// generate pagination keyboard row for page/total
 func rowPagination(cmd string, page int, total int) [][]map[string]string {
 	// make matrix with empty row
 	buttons := [][]map[string]string{{}}
@@ -1103,6 +1117,28 @@ func rowPagination(cmd string, page int, total int) [][]map[string]string {
 			// last page
 			buttons[0] = append(buttons[0], map[string]string{">>": fmt.Sprintf("%s %d", cmd, total)})
 		}
+	}
+	return buttons
+}
+
+// generate pagination keyboard row for offset/limit
+func rowOffsetLimit(cmd string, offset int, limit int) [][]map[string]string {
+	// current (refresh) and next button
+	buttons := [][]map[string]string{{
+		{fmt.Sprintf("[%d-%d]", offset+1, offset+limit): fmt.Sprintf("%s %d", cmd, offset)},
+		{fmt.Sprintf("[%d-%d] >", offset+limit+1, offset+limit*2): fmt.Sprintf("%s %d", cmd, offset+limit)},
+	}}
+	// prev button
+	if offset > limit {
+		buttons[0] = append(
+			[]map[string]string{{fmt.Sprintf("< [%d-%d]", offset-limit+1, offset): fmt.Sprintf("%s %d", cmd, offset-limit)}},
+			buttons[0]...)
+	}
+	// first button
+	if offset > 0 {
+		buttons[0] = append(
+			[]map[string]string{{fmt.Sprintf("<< [1-%d]", limit): fmt.Sprintf("%s 0", cmd)}},
+			buttons[0]...)
 	}
 	return buttons
 }
@@ -1276,6 +1312,30 @@ func freePorts(ip string) (string, error) {
 		res = fmtObj(ports, "port")
 	}
 	return res, err
+}
+
+// get last logs from api and format with template
+func getLastLogs(endpoint string, offset int, limit int) (string, error) {
+	var res string
+	var events []LogEvent
+
+	resp, err := apiGet(fmt.Sprintf("%s/log?offset=%d&limit=%d", endpoint, offset, limit))
+	if err != nil {
+		return res, err
+	}
+	mapstructureDecode(resp["data"], &events)
+	res = fmtObj(events, "log.tmpl")
+	return res, err
+}
+
+// shortcut for switch logs
+func swLogs(ip string, offset int, limit int) (string, error) {
+	return getLastLogs(fmt.Sprintf("/sw/%s", ip), offset, limit)
+}
+
+// shortcut for port logs
+func portLogs(ip string, port string, offset int, limit int) (string, error) {
+	return getLastLogs(fmt.Sprintf("/sw/%s/ports/%s", ip, port), offset, limit)
 }
 
 // get port summary and format it with template
@@ -1578,8 +1638,7 @@ func rawHandler(raw string) (string, tgbotapi.InlineKeyboardMarkup) {
 	case ip != "":
 		// ip is sw ip
 		if fullIP(ip, true) != "" {
-			port, args := splitArgs(args)
-			res, kb = swHandler(ip, port, args)
+			res, kb = swHandler(ip, args)
 			// ip is client ip
 		} else {
 			res, kb = clientHandler(ip, args)
@@ -1599,26 +1658,97 @@ func rawHandler(raw string) (string, tgbotapi.InlineKeyboardMarkup) {
 }
 
 // switch ip handler
-func swHandler(ip string, port string, args string) (string, tgbotapi.InlineKeyboardMarkup) {
+func swHandler(ip string, args string) (string, tgbotapi.InlineKeyboardMarkup) {
 	var res string // text message result
 	var err error
 	var kb tgbotapi.InlineKeyboardMarkup // inline keyboard markup
 	pView := []string{"short", "full"}   // view styles for port summary
 	idx := 0                             // default index - short view
-	logDebug(fmt.Sprintf("[swHandler] ip: %s, port: %s, args: '%s'", ip, port, args))
-	// empty or invalid port - return full sw info
-	if _, err := strconv.Atoi(port); err != nil && port != "free" {
-		res, err = swSummary(ip, "full")
-		if err == nil || err.Error() == "unavailable" {
-			kb = genKeyboard([][]map[string]string{
-				{
-					{"free ports": fmt.Sprintf("raw edit %s free", ip)},
-				},
-				{
-					{"refresh": fmt.Sprintf("raw edit %s", ip)},
-					{"close": "close"},
-				},
+	// offset := 0                          // start offset for logs
+	limit := 5 // default limit for logs
+	logDebug(fmt.Sprintf("[swHandler] ip: %s, args: '%s'", ip, args))
+	port := ""
+	// check first arg
+	action, args := splitArgs(args)
+	switch action {
+	// free ports handler
+	case "free":
+		res += fmt.Sprintf("Free ports for <code>%s</code>:", ip)
+		s, err := freePorts(ip)
+		if err != nil {
+			res += fmt.Sprintf("\n<code>%s</code>", err.Error())
+		} else {
+			res += s
+			kb = genKeyboard([][]map[string]string{{
+				{"switch info": fmt.Sprintf("raw edit %s", ip)},
+				{"close": "close"},
+			}})
+		}
+		return res, kb
+	// switch logs handler
+	case "log":
+		o, _ := splitArgs(args)
+		offset, _ := strconv.Atoi(o)
+		res += fmt.Sprintf("[<code>%s</code>] events [%d - %d]:", ip, offset+1, offset+limit)
+		s, err := swLogs(ip, offset, limit)
+		if err != nil {
+			res += fmt.Sprintf("\n<code>%s</code>", err.Error())
+		} else {
+			res += s
+			// first row with pagination
+			buttons := rowOffsetLimit(fmt.Sprintf("raw edit %s log", ip), offset, limit)
+			// second row
+			buttons = append(buttons, []map[string]string{
+				{"switch info": fmt.Sprintf("raw edit %s", ip)},
+				{"close": "close"},
 			})
+			kb = genKeyboard(buttons)
+		}
+		return res, kb
+	// check if first arg is port
+	default:
+		if _, err := strconv.Atoi(action); err != nil {
+			// empty or invalid port - return full sw info
+			res, err = swSummary(ip, "full")
+			// logs are displayed even if switch is not available
+			if err == nil || err.Error() == "unavailable" {
+				buttons := [][]map[string]string{
+					{
+						{"switch log": fmt.Sprintf("raw edit %s log", ip)},
+					},
+					{
+						{"refresh": fmt.Sprintf("raw edit %s", ip)},
+						{"close": "close"},
+					},
+				}
+				// if switch is available - add free ports button
+				if err == nil {
+					buttons[0] = append([]map[string]string{{"free ports": fmt.Sprintf("raw edit %s free", ip)}}, buttons[0]...)
+				}
+				kb = genKeyboard(buttons)
+			}
+			return res, kb
+		}
+		// else - go next to port handler
+		port = action
+	}
+	// port logs handler
+	if a, o := splitArgs(args); a == "log" {
+		offset, _ := strconv.Atoi(o)
+		res += fmt.Sprintf("[<code>%s</code>]\nport <b>%s</b> events [%d - %d]:", ip, port, offset+1, offset+limit)
+		s, err := portLogs(ip, port, offset, limit)
+		if err != nil {
+			res += fmt.Sprintf("\n<code>%s</code>", err.Error())
+		} else {
+			res += s
+			// first row with pagination
+			buttons := rowOffsetLimit(fmt.Sprintf("raw edit %s %s log", ip, port), offset, limit)
+			// second row
+			buttons = append(buttons, []map[string]string{
+				{"port info": fmt.Sprintf("raw edit %s %s", ip, port)},
+				{"close": "close"},
+			})
+			kb = genKeyboard(buttons)
 		}
 		return res, kb
 	}
@@ -1626,17 +1756,6 @@ func swHandler(ip string, port string, args string) (string, tgbotapi.InlineKeyb
 	res, err = swSummary(ip, "short")
 	// no need to check port if switch is unavailable
 	if err != nil {
-		return res, kb
-	}
-	// free ports handler
-	if port == "free" {
-		res += "\nFree ports:"
-		s, err := freePorts(ip)
-		if err != nil {
-			res += fmt.Sprintf("\n<code>%s</code>", err.Error())
-		} else {
-			res += s
-		}
 		return res, kb
 	}
 	// clear counters if needed
@@ -1656,6 +1775,7 @@ func swHandler(ip string, port string, args string) (string, tgbotapi.InlineKeyb
 		{
 			// inverted view for full/short button calculated as (1 - idx)
 			{pView[1-idx]: fmt.Sprintf("raw edit %s %s %s", ip, port, pView[1-idx])},
+			{"port log": fmt.Sprintf("raw edit %s %s log", ip, port)},
 			{"clear counters": fmt.Sprintf("raw edit %s %s %s clear", ip, port, pView[idx])},
 		},
 		{

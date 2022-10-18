@@ -1,0 +1,9 @@
+{{- if . }}
+{{ range . }}
+{{- $t := utc2msk .Time }}
+[{{ $t.Format "02.01.2006 15:04:05" }}]
+<code>{{ .Message }}</code>
+{{ end }}
+{{- else }}
+No events
+{{- end }}
