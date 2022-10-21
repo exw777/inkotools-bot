@@ -737,12 +737,17 @@ func rowPagination(cmd string, page int, total int) [][]map[string]string {
 }
 
 // generate pagination keyboard row for offset/limit
-func rowOffsetLimit(cmd string, offset int, limit int) [][]map[string]string {
-	// current (refresh) and next button
+func rowOffsetLimit(cmd string, offset int, limit int, isLastPage bool) [][]map[string]string {
+	// current (refresh)
 	buttons := [][]map[string]string{{
 		{fmt.Sprintf("[%d-%d]", offset+1, offset+limit): fmt.Sprintf("%s %d", cmd, offset)},
-		{fmt.Sprintf("[%d-%d] >", offset+limit+1, offset+limit*2): fmt.Sprintf("%s %d", cmd, offset+limit)},
 	}}
+	// next button
+	if !isLastPage {
+		buttons[0] = append(buttons[0], map[string]string{
+			fmt.Sprintf("[%d-%d] >", offset+limit+1, offset+limit*2): fmt.Sprintf("%s %d", cmd, offset+limit),
+		})
+	}
 	// prev button
 	if offset > limit {
 		buttons[0] = append(
@@ -930,26 +935,27 @@ func freePorts(ip string) (string, error) {
 }
 
 // get last logs from api and format with template
-func getLastLogs(endpoint string, offset int, limit int) (string, error) {
+func getLastLogs(endpoint string, offset int, limit int) (string, bool, error) {
 	var res string
 	var events []LogEvent
 
 	resp, err := apiGet(fmt.Sprintf("%s/log?offset=%d&limit=%d", endpoint, offset, limit))
 	if err != nil {
-		return res, err
+		return res, true, err
 	}
 	mapstructureDecode(resp["data"], &events)
 	res = fmtObj(events, "log.tmpl")
-	return res, err
+	isLastPage := len(events) < limit
+	return res, isLastPage, err
 }
 
 // shortcut for switch logs
-func swLogs(ip string, offset int, limit int) (string, error) {
+func swLogs(ip string, offset int, limit int) (string, bool, error) {
 	return getLastLogs(fmt.Sprintf("/sw/%s", ip), offset, limit)
 }
 
 // shortcut for port logs
-func portLogs(ip string, port string, offset int, limit int) (string, error) {
+func portLogs(ip string, port string, offset int, limit int) (string, bool, error) {
 	return getLastLogs(fmt.Sprintf("/sw/%s/ports/%s", ip, port), offset, limit)
 }
 
@@ -1274,13 +1280,13 @@ func swHandler(ip string, args string) (string, tgbotapi.InlineKeyboardMarkup) {
 		o, _ := splitArgs(args)
 		offset, _ := strconv.Atoi(o)
 		res += fmt.Sprintf("[<code>%s</code>] events [%d - %d]:", ip, offset+1, offset+limit)
-		s, err := swLogs(ip, offset, limit)
+		s, isLastPage, err := swLogs(ip, offset, limit)
 		if err != nil {
 			res += fmt.Sprintf("\n<code>%s</code>", err.Error())
 		} else {
 			res += s
 			// first row with pagination
-			buttons := rowOffsetLimit(fmt.Sprintf("raw edit %s log", ip), offset, limit)
+			buttons := rowOffsetLimit(fmt.Sprintf("raw edit %s log", ip), offset, limit, isLastPage)
 			// second row
 			buttons = append(buttons, []map[string]string{
 				{"switch info": fmt.Sprintf("raw edit %s", ip)},
@@ -1320,13 +1326,13 @@ func swHandler(ip string, args string) (string, tgbotapi.InlineKeyboardMarkup) {
 	if a, o := splitArgs(args); a == "log" {
 		offset, _ := strconv.Atoi(o)
 		res += fmt.Sprintf("[<code>%s</code>]\nport <b>%s</b> events [%d - %d]:", ip, port, offset+1, offset+limit)
-		s, err := portLogs(ip, port, offset, limit)
+		s, isLastPage, err := portLogs(ip, port, offset, limit)
 		if err != nil {
 			res += fmt.Sprintf("\n<code>%s</code>", err.Error())
 		} else {
 			res += s
 			// first row with pagination
-			buttons := rowOffsetLimit(fmt.Sprintf("raw edit %s %s log", ip, port), offset, limit)
+			buttons := rowOffsetLimit(fmt.Sprintf("raw edit %s %s log", ip, port), offset, limit, isLastPage)
 			// second row
 			buttons = append(buttons, []map[string]string{
 				{"port info": fmt.Sprintf("raw edit %s %s", ip, port)},
