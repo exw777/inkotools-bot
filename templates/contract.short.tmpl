@@ -24,7 +24,7 @@
 <i>Cable: </i><code>{{ .Cable }}</code>
 {{- end }}
 {{- if .Comment }}
-<i>Annotation: </i>{{ .Comment }}
+<i>Annotation: </i>{{ html .Comment }}
 {{- end }}
 {{- if .Tickets }}
 <i>Tickets: </i><b>{{ len .Tickets }}</b> |{{ range .Tickets }} {{.Master}} |{{ end }}

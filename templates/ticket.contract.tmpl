@@ -1,5 +1,5 @@
 <b>{{ .Master }}</b>
-[{{ .Created.Format "02.01.2006" }}] <b>{{ .Creator }}:</b> <i>{{ .Issue }}</i>
+[{{ .Created.Format "02.01.2006" }}] <b>{{ .Creator }}:</b> <i>{{ html .Issue }}</i>
 {{- range .Comments }}
-[{{ .Time.Format "02.01 15:04" }}] <b>{{ .Author }}:</b> <i>{{ .Comment }}</i>
+[{{ .Time.Format "02.01 15:04" }}] <b>{{ .Author }}:</b> <i>{{ html .Comment }}</i>
 {{- end }}
