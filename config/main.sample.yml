@@ -7,4 +7,6 @@ listen_port: "9000"                         # internal port app listen on
 admin: 123456789                            # telegram user id for admin
 inkotools_api_url: http://127.0.0.1:9999/   # url to inkotools api service
 debug: false                                # enable debug logging
+maintenance: false                          # enable maintenance mode
+maintenance_message: "Bot is under maintenance. Try later."
 ...
