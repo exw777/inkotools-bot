@@ -30,16 +30,18 @@ const CFGFILE string = "config/main.yml"
 
 // Config struct
 type Config struct {
-	BotToken      string `yaml:"bot_token"`
-	UseWebhook    bool   `yaml:"use_webhook"`
-	WebhookURL    string `yaml:"webhook_url"`
-	ListenPort    string `yaml:"listen_port"`
-	Admin         int64  `yaml:"admin"`
-	InkoToolsAPI  string `yaml:"inkotools_api_url"`
-	GraydbURL     string `yaml:"graydb_url"`
-	CacheLifetime string `yaml:"cache_lifetime"`
-	CacheInterval string `yaml:"cache_interval"`
-	DebugMode     bool   `yaml:"debug"`
+	BotToken        string `yaml:"bot_token"`
+	UseWebhook      bool   `yaml:"use_webhook"`
+	WebhookURL      string `yaml:"webhook_url"`
+	ListenPort      string `yaml:"listen_port"`
+	Admin           int64  `yaml:"admin"`
+	InkoToolsAPI    string `yaml:"inkotools_api_url"`
+	GraydbURL       string `yaml:"graydb_url"`
+	CacheLifetime   string `yaml:"cache_lifetime"`
+	CacheInterval   string `yaml:"cache_interval"`
+	DebugMode       bool   `yaml:"debug"`
+	MaintenanceMode bool   `yaml:"maintenance"`
+	MaintenanceMsg  string `yaml:"maintenance_message"`
 }
 
 // UserConfig struct
@@ -1638,6 +1640,14 @@ func adminHandler(msg string) string {
 		} else {
 			res = "Config reloaded"
 		}
+	case "maintenance":
+		switch arg {
+		case "on":
+			CFG.MaintenanceMode = true
+		case "off":
+			CFG.MaintenanceMode = false
+		}
+		res = fmt.Sprintf("Maintenance: %v", CFG.MaintenanceMode)
 	default:
 		res = HELPADMIN
 	}
@@ -2731,6 +2741,12 @@ func main() {
 				}
 			}
 
+			// maintenance mode
+			if CFG.MaintenanceMode && uid != CFG.Admin {
+				res, kb = CFG.MaintenanceMsg, closeButton()
+				goto SEND
+			}
+
 			// cmd processing
 			switch cmd {
 			case "help":
@@ -2820,6 +2836,11 @@ func main() {
 				editKeyboard(msg, genKeyboard([][]map[string]string{{{"Waiting...": "dummy"}}}))
 			}
 
+			// maintenance mode
+			if CFG.MaintenanceMode && uid != CFG.Admin && mode != "close" {
+				mode = "maintenance"
+			}
+
 			switch mode {
 			case "raw":
 				res, kb = rawHandler(rawCmd)
@@ -2861,6 +2882,8 @@ func main() {
 						continue
 					}
 				}
+			case "maintenance":
+				res, kb = CFG.MaintenanceMsg, closeButton()
 			default:
 				logWarning(fmt.Sprintf("[callback] wrong mode: %s", mode))
 				goto CALLBACK
