@@ -113,6 +113,7 @@ type PortSummary struct {
 		Error   string
 	}
 	LinkDownCount int
+	LastLogEvent  string
 }
 
 // Port type
@@ -1019,6 +1020,10 @@ func portSummary(ip string, port string, style string) (string, error) {
 	if err == nil {
 		mapstructure.Decode(resp["data"], &pInfo.LinkDownCount)
 	}
+
+	// get last log event
+	s, _, err := portLogs(ip, port, 0, 1)
+	pInfo.LastLogEvent = strings.Trim(s, "\n")
 
 	// get port counters
 	resp, err = apiGet(fmt.Sprintf("/sw/%s/ports/%s/counters", ip, port))
