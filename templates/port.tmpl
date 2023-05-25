@@ -21,7 +21,7 @@
 {{- end -}}
 {{- end }}
 {{- if .Description }}
-<i>Description: </i><code>{{ .Description }}</code>{{ end }}
+<i>Description: </i><code>{{ fmtHTML .Description }}</code>{{ end }}
 {{- if .DDM }}{{ with .DDM }}
 {{- if .Temperature }}
 <i>Temperature: </i><code>{{ .Temperature }}</code>{{ end }}
