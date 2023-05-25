@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"log"
 	"math/rand"
 	"net/http"
@@ -841,6 +842,7 @@ func initConfig() error {
 		},
 		"fmtPhone":   fmtPhone,
 		"fmtAddress": fmtAddress,
+		"fmtHTML":    html.EscapeString,
 		"inc":        func(x int) int { return x + 1 },
 		"add":        func(x, y int) int { return x + y },
 		"utc2msk":    utc2msk,
