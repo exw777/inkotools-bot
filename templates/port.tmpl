@@ -164,7 +164,8 @@
 {{- if .LinkDownCount }}
 <i>LinkDown: </i><code>{{ .LinkDownCount }}</code> times in last 24h
 {{ end }}
-{{- template "mac" .MAC }}
+<i>Last event: </i>{{ .LastLogEvent }}
+{{ template "mac" .MAC }}
 {{- template "counters" .Counters }}
 {{- if eq .Style "full" }}
 {{- template "bandwidth" .Bandwidth }}
