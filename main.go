@@ -415,6 +415,19 @@ func printUpdated(t time.Time) string {
 	return fmt.Sprintf("\n<i>Updated:</i> <code>%s</code>", t.Format("2006-01-02 15:04:05"))
 }
 
+// calculate optimal row length for many buttons
+func calcRowLength(x int) int {
+	// in telegram max row length is 8
+	inRow := 8
+	if x > inRow && x%inRow > 0 {
+		inRow = x / (x/inRow + 1)
+		if x%inRow > 0 {
+			inRow++
+		}
+	}
+	return inRow
+}
+
 // MAIN FUNCTIONS
 
 // init telegram bot
@@ -936,6 +949,20 @@ func freePorts(ip string) (string, error) {
 	return res, err
 }
 
+// get switch access ports and format them with template
+func accessPorts(ip string) (string, error) {
+	var res string
+	var ports []Port
+
+	resp, err := apiGet(fmt.Sprintf("/sw/%s/accessports/", ip))
+	if err != nil {
+		return res, err
+	}
+	mapstructure.Decode(resp["data"], &ports)
+	res = fmtObj(ports, "port")
+	return res, err
+}
+
 // get last logs from api and format with template
 func getLastLogs(endpoint string, offset int, limit int) (string, bool, error) {
 	var res string
@@ -1273,23 +1300,54 @@ func swHandler(ip string, args string) (string, tgbotapi.InlineKeyboardMarkup) {
 	switch action {
 	// free ports handler
 	case "free":
-		res += fmt.Sprintf("Free ports for <code>%s</code>:", ip)
+		res += "Free ports:"
 		s, err := freePorts(ip)
 		if err != nil {
 			res += fmt.Sprintf("\n<code>%s</code>", err.Error())
 		} else {
 			res += s
 			kb = genKeyboard([][]map[string]string{{
-				{"switch info": fmt.Sprintf("raw edit %s", ip)},
+				{ip: fmt.Sprintf("raw edit %s", ip)},
 				{"close": "close"},
 			}})
+		}
+		return res, kb
+	// access ports handler
+	case "access":
+		s, err := accessPorts(ip)
+		if err != nil {
+			res += fmt.Sprintf("\n<code>%s</code>", err.Error())
+		} else {
+			res += s
+			// Generate buttons for each port
+			pCnt := strings.Count(s, "Port:")
+			var buttons [][]map[string]string
+			var row []map[string]string
+			inRow := calcRowLength(pCnt)
+			for p := 1; p <= pCnt; p++ {
+				row = append(row, map[string]string{strconv.Itoa(p): fmt.Sprintf("raw send %s %d", ip, p)})
+				// next row on hit inRow count
+				if len(row) == inRow {
+					buttons = append(buttons, row)
+					row = nil
+				}
+			}
+			// add last row (< inRow buttons)
+			if len(row) > 0 {
+				buttons = append(buttons, row)
+			}
+			buttons = append(buttons, []map[string]string{
+				{ip: fmt.Sprintf("raw edit %s", ip)},
+				{"close": "close"},
+			})
+			kb = genKeyboard(buttons)
 		}
 		return res, kb
 	// switch logs handler
 	case "log":
 		o, _ := splitArgs(args)
 		offset, _ := strconv.Atoi(o)
-		res += fmt.Sprintf("[<code>%s</code>] events [%d - %d]:", ip, offset+1, offset+limit)
+		res += fmt.Sprintf("events [%d - %d]:", offset+1, offset+limit)
 		s, isLastPage, err := swLogs(ip, offset, limit)
 		if err != nil {
 			res += fmt.Sprintf("\n<code>%s</code>", err.Error())
@@ -1299,7 +1357,7 @@ func swHandler(ip string, args string) (string, tgbotapi.InlineKeyboardMarkup) {
 			buttons := rowOffsetLimit(fmt.Sprintf("raw edit %s log", ip), offset, limit, isLastPage)
 			// second row
 			buttons = append(buttons, []map[string]string{
-				{"switch info": fmt.Sprintf("raw edit %s", ip)},
+				{ip: fmt.Sprintf("raw edit %s", ip)},
 				{"close": "close"},
 			})
 			kb = genKeyboard(buttons)
@@ -1321,9 +1379,12 @@ func swHandler(ip string, args string) (string, tgbotapi.InlineKeyboardMarkup) {
 						{"close": "close"},
 					},
 				}
-				// if switch is available - add free ports button
+				// if switch is available - add free and access ports buttons
 				if err == nil {
-					buttons[0] = append([]map[string]string{{"free ports": fmt.Sprintf("raw edit %s free", ip)}}, buttons[0]...)
+					buttons = append([][]map[string]string{{
+						{"free ports": fmt.Sprintf("raw edit %s free", ip)},
+						{"access ports": fmt.Sprintf("raw edit %s access", ip)},
+					}}, buttons...)
 				}
 				kb = genKeyboard(buttons)
 			}
@@ -1335,7 +1396,7 @@ func swHandler(ip string, args string) (string, tgbotapi.InlineKeyboardMarkup) {
 	// port logs handler
 	if a, o := splitArgs(args); a == "log" {
 		offset, _ := strconv.Atoi(o)
-		res += fmt.Sprintf("[<code>%s</code>]\nport <b>%s</b> events [%d - %d]:", ip, port, offset+1, offset+limit)
+		res += fmt.Sprintf("events [%d - %d]:", offset+1, offset+limit)
 		s, isLastPage, err := portLogs(ip, port, offset, limit)
 		if err != nil {
 			res += fmt.Sprintf("\n<code>%s</code>", err.Error())
@@ -1345,7 +1406,7 @@ func swHandler(ip string, args string) (string, tgbotapi.InlineKeyboardMarkup) {
 			buttons := rowOffsetLimit(fmt.Sprintf("raw edit %s %s log", ip, port), offset, limit, isLastPage)
 			// second row
 			buttons = append(buttons, []map[string]string{
-				{"port info": fmt.Sprintf("raw edit %s %s", ip, port)},
+				{fmt.Sprintf("%s %s", ip, port): fmt.Sprintf("raw edit %s %s", ip, port)},
 				{"close": "close"},
 			})
 			kb = genKeyboard(buttons)
