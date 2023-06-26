@@ -1334,7 +1334,11 @@ func accessPorts(ip string) (string, error) {
 		return res, err
 	}
 	mapstructure.Decode(resp["data"], &ports)
-	res = fmtObj(ports, "port")
+	if len(ports) == 0 {
+		res = "No access ports found"
+	} else {
+		res = fmtObj(ports, "port")
+	}
 	return res, err
 }
 
