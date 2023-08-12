@@ -2077,7 +2077,7 @@ func clientHandler(client string, args string) (string, tgbotapi.InlineKeyboardM
 		kb.InlineKeyboard[0] = append(
 			kb.InlineKeyboard[0],
 			tgbotapi.NewInlineKeyboardButtonData(
-				"port info", fmt.Sprintf("raw send %s %d", ip, port)))
+				"port info1", fmt.Sprintf("raw send %s %d", ip, port)))
 	}
 	return res, kb
 }
@@ -2472,7 +2472,7 @@ func genTicketKeyboard(ticket Ticket) tgbotapi.InlineKeyboardMarkup {
 		if c.Contract.SwitchIP != "" && c.Contract.Port != "" {
 			cRow = append(cRow,
 				tgbotapi.NewInlineKeyboardButtonData(
-					"port info",
+					"port info2",
 					fmt.Sprintf("raw send %s %s", c.Contract.SwitchIP, c.Contract.Port),
 				),
 			)
