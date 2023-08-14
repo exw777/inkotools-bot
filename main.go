@@ -2591,6 +2591,28 @@ func addComment(uid int64, contract string, ticket string, comment string) {
 	}
 }
 
+
+
+
+// CHANGE OWNER
+func changeOwner(uid int64, contract string, ticket string, comment string) {
+	_, err := requestAPI("POST",
+		fmt.Sprintf("/gdb/%s/tickets/%s", contract, ticket),
+		map[string]interface{}{
+			"token":   Users[uid].Token,
+			"comment": "1",
+		})
+	if err != nil {
+		sendAlert(uid, fmtErr(err.Error()))
+	} else {
+		go updateTickets(uid)
+	}
+}
+
+
+
+
+
 // add comment handler
 func commentHandler(args string, uid int64, msgID int) (string, tgbotapi.InlineKeyboardMarkup) {
 	var res string
