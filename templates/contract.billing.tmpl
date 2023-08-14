@@ -7,7 +7,7 @@
 {{- if .Tariff }}
 <i>Tariff: </i><code>{{ .Tariff }}</code>
 {{- end }}
-{{- range .IPs }}
+<i>IP Address: </i>{{- range .IPs }}
 <code>{{ . }}</code>
 {{- end }}
 {{- template "services" . }}
